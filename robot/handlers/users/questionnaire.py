@@ -3,11 +3,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, Message
 from aiogram3_calendar.simple_calendar import SimpleCalendar, SimpleCalendarCallback
 
+from robot.utils.google_drive import save_full_questionnaire_to_drive
+
+
+
 import re
 
 from aiogram import Router
 from aiogram.filters import StateFilter
 from robot.states import QuestionnaireStates
+from robot.utils.validators import is_pdf, is_allowed_file
+
 
 
 router = Router()
@@ -38,20 +44,29 @@ async def questionnaire_full_name(message: types.Message, state: FSMContext):
 
 @router.callback_query(SimpleCalendarCallback.filter(), StateFilter(QuestionnaireStates.Q2_BirthDate))
 async def process_simple_calendar(callback_query: types.CallbackQuery, callback_data: dict, state: FSMContext):
-    selected, date = await SimpleCalendar().process_selection(callback_query, callback_data)
-    if selected:
-        await state.update_data(q2_birth_date=date.strftime("%d.%m.%Y"))
+    try:
+        selected, date = await SimpleCalendar().process_selection(callback_query, callback_data)
 
-        gender_markup = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="Мужской"), KeyboardButton(text="Женский")]
-            ],
-            resize_keyboard=True,
-            one_time_keyboard=True
-        )
-        await callback_query.message.answer("3️⃣ Укажите пол пациента:", reply_markup=gender_markup)
-        await state.set_state(QuestionnaireStates.Q3_Gender)
+        if selected:
+            await state.update_data(q2_birth_date=date.strftime("%d.%m.%Y"))
+
+            gender_markup = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="Мужской"), KeyboardButton(text="Женский")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            await callback_query.message.answer("3️⃣ Укажите пол пациента:", reply_markup=gender_markup)
+            await state.set_state(QuestionnaireStates.Q3_Gender)
+        else:
+            await callback_query.answer("📅 Пожалуйста, выберите дату, а не переходите по месяцам", show_alert=False)
+
+    except Exception as e:
+        print(f"❌ Error in process_simple_calendar: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при выборе даты. Попробуйте ещё раз.")
         await callback_query.answer()
+
         
 
 @router.message(StateFilter(QuestionnaireStates.Q3_Gender))
@@ -116,6 +131,12 @@ async def questionnaire_region(message: types.Message, state: FSMContext):
 
 @router.message(StateFilter(QuestionnaireStates.Q7_WhoApplies))
 async def questionnaire_who_applies(message: types.Message, state: FSMContext):
+    valid_options = ["Сам(а)", "Родственник"]
+
+    if message.text not in valid_options:
+        await message.answer("⚠️ Пожалуйста, выберите один из предложенных вариантов: 'Сам(а)' или 'Родственник'")
+        return
+
     await state.update_data(q7_who_applies=message.text)
 
     keyboard = ReplyKeyboardMarkup(
@@ -130,6 +151,7 @@ async def questionnaire_who_applies(message: types.Message, state: FSMContext):
 
     await message.answer("8️⃣ Является ли пациентом Сабо-Дармон?", reply_markup=keyboard)
     await state.set_state(QuestionnaireStates.Q8_SaboPatient)
+
 
 
 @router.message(StateFilter(QuestionnaireStates.Q8_SaboPatient))
@@ -206,6 +228,10 @@ async def questionnaire_diagnosis_text(message: types.Message, state: FSMContext
 @router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q12_DiagnosisFile))
 @router.message(F.content_type == types.ContentType.PHOTO, StateFilter(QuestionnaireStates.Q12_DiagnosisFile))
 async def questionnaire_diagnosis_file(message: types.Message, state: FSMContext):
+    if not is_allowed_file(message):
+        await message.answer("❌ Пожалуйста, прикрепите PDF или изображение (фото диагноза).")
+        return
+
     file_id = message.document.file_id if message.document else message.photo[-1].file_id
     await state.update_data(q12_diagnosis_file_id=file_id)
 
@@ -368,21 +394,43 @@ async def proceed_to_q17(message: types.Message, state: FSMContext):
 @router.message(StateFilter(QuestionnaireStates.Q17_NeedConfirmationDocs))
 async def questionnaire_need_docs(message: types.Message, state: FSMContext):
     options = ["☑️ Да, есть", "☑️ Нет, но можем взять", "☑️ Нет"]
-    if message.text not in options:
+    user_choice = message.text.strip()
+
+    if user_choice not in options:
+        await message.answer("❌ Пожалуйста, выберите один из предложенных вариантов.")
         await proceed_to_q17(message, state)
         return
 
-    await state.update_data(q17_need_confirmation=message.text)
-    await message.answer("📎 Прикрепите документ: справку о нуждаемости, 'темир дафтар' и т.п. (фото или PDF).", reply_markup=ReplyKeyboardRemove())
-    await state.set_state(QuestionnaireStates.Q17_ConfirmationFile)
+    await state.update_data(q17_need_confirmation=user_choice)
+
+    if user_choice == "☑️ Да, есть":
+        await message.answer(
+            "📎 Прикрепите документ: справку о нуждаемости, 'темир дафтар' и т.п. (фото или PDF).",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        await state.set_state(QuestionnaireStates.Q17_ConfirmationFile)
+    else:
+        kb = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="До 5 млн"), KeyboardButton(text="5–7 млн")],
+                [KeyboardButton(text="7–10 млн"), KeyboardButton(text="10+ млн")]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        await message.answer("📊 Укажите средний доход вашей семьи в месяц:", reply_markup=kb)
+        await state.set_state(QuestionnaireStates.Q18_AvgIncome)
 
 
 @router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q17_ConfirmationFile))
 async def questionnaire_confirm_doc(message: types.Message, state: FSMContext):
-    file_id = message.document.file_id
+    if not is_allowed_file(message):
+        await message.answer("❌ Прикрепите PDF или изображение справки о нуждаемости.")
+        return
+
+    file_id = message.document.file_id if message.document else message.photo[-1].file_id
     await state.update_data(q17_confirmation_file=file_id)
 
-    # Переход к следующему шагу
     await message.answer("✅ Документ получен.\n\n📊 Укажите средний доход вашей семьи в месяц:")
     kb = ReplyKeyboardMarkup(
         keyboard=[
@@ -408,9 +456,19 @@ async def questionnaire_avg_income(message: types.Message, state: FSMContext):
     await state.set_state(QuestionnaireStates.Q18_IncomeDoc)
 
 
-@router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q18_IncomeDoc))
+@router.message(
+    (F.content_type.in_({types.ContentType.DOCUMENT, types.ContentType.PHOTO})),
+    StateFilter(QuestionnaireStates.Q18_IncomeDoc)
+)
 async def questionnaire_income_doc(message: types.Message, state: FSMContext):
-    file_id = message.document.file_id
+    if message.document:
+        file_id = message.document.file_id
+    elif message.photo:
+        file_id = message.photo[-1].file_id
+    else:
+        await message.answer("❌ Прикрепите PDF или изображение документа о доходах.")
+        return
+
     await state.update_data(q18_income_doc=file_id)
 
     await message.answer("👶 Сколько несовершеннолетних детей в семье?")
@@ -426,6 +484,7 @@ async def questionnaire_income_doc(message: types.Message, state: FSMContext):
     await state.set_state(QuestionnaireStates.Q19_ChildrenCount)
 
 
+
 @router.message(StateFilter(QuestionnaireStates.Q19_ChildrenCount))
 async def questionnaire_children_count(message: types.Message, state: FSMContext):
     if message.text not in ["0", "1", "2", "3", "4", "5+"]:
@@ -433,22 +492,59 @@ async def questionnaire_children_count(message: types.Message, state: FSMContext
         return
 
     await state.update_data(q19_children_count=message.text)
-    if message.text != "0":
-        await message.answer("📎 Прикрепите метрику каждого ребёнка (можно несколько файлов).", reply_markup=ReplyKeyboardRemove())
-        await state.set_state(QuestionnaireStates.Q19_ChildrenDocs)
-    else:
+
+    if message.text == "0":
         await proceed_to_q20(message, state)
+    else:
+        await state.update_data(q19_children_docs=[])
+        await message.answer(
+            "📎 Прикрепите метрику каждого ребёнка (фото или PDF).\n"
+            "После загрузки всех файлов нажмите «✅ Завершить загрузку».",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="✅ Завершить загрузку")]],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            )
+        )
+        await state.set_state(QuestionnaireStates.Q19_ChildrenDocs)
 
 
-@router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q19_ChildrenDocs))
+@router.message(
+    (F.content_type.in_([types.ContentType.DOCUMENT, types.ContentType.PHOTO])),
+    StateFilter(QuestionnaireStates.Q19_ChildrenDocs)
+)
 async def questionnaire_children_docs(message: types.Message, state: FSMContext):
-    file_id = message.document.file_id
+    if not is_allowed_file(message):
+        await message.answer("❌ Прикрепите изображение или PDF метрики ребёнка.")
+        return
+
+    file_id = message.document.file_id if message.document else message.photo[-1].file_id
+
     data = await state.get_data()
     children_docs = data.get("q19_children_docs", [])
     children_docs.append(file_id)
     await state.update_data(q19_children_docs=children_docs)
 
-    await message.answer("✅ Метрика получена.")
+    await message.answer(f"✅ Метрика получена ({len(children_docs)} файл(ов)).")
+
+
+@router.message(F.text == "✅ Завершить загрузку", StateFilter(QuestionnaireStates.Q19_ChildrenDocs))
+async def finish_children_upload(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    children_count_raw = data.get("q19_children_count", "0")
+    
+    try:
+        children_count = 5 if children_count_raw == "5+" else int(children_count_raw)
+    except ValueError:
+        children_count = 0
+
+    uploaded = len(data.get("q19_children_docs", []))
+
+    if uploaded < children_count:
+        await message.answer(f"❗ Вы указали {children_count}, а загрузили только {uploaded} файл(ов). Пожалуйста, загрузите все метрики или подтвердите, что загрузка завершена.")
+        return
+
+    await message.answer("✅ Загрузка завершена.", reply_markup=ReplyKeyboardRemove())
     await proceed_to_q20(message, state)
 
 
@@ -481,20 +577,27 @@ async def questionnaire_housing_type(message: types.Message, state: FSMContext):
 
 
 @router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q20_HousingDoc))
+@router.message(F.content_type == types.ContentType.PHOTO, StateFilter(QuestionnaireStates.Q20_HousingDoc))
 async def questionnaire_housing_doc(message: types.Message, state: FSMContext):
-    file_id = message.document.file_id
+    if not is_allowed_file(message):
+        await message.answer("❌ Прикрепите изображение или PDF договора аренды.")
+        return
+
+    file_id = message.document.file_id if message.document else message.photo[-1].file_id
     await state.update_data(q20_housing_doc=file_id)
 
     await message.answer("✅ Документ по жилью получен.")
     await proceed_to_q21(message, state)
 
 
+
 async def proceed_to_q21(message: types.Message, state: FSMContext):
     await message.answer("💰 До какой суммы вы можете оплатить лечение? (в сумах)", reply_markup=ReplyKeyboardRemove())
-    await state.set_state(QuestionnaireStates.Q21_WhoWorksInFamily)
+    await state.set_state(QuestionnaireStates.Q21_Contribution)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q20_HousingDoc))
+
+@router.message(StateFilter(QuestionnaireStates.Q21_Contribution))
 async def questionnaire_contribution(message: types.Message, state: FSMContext):
     amount = message.text.strip().replace(" ", "")
     if not amount.isdigit():
@@ -509,12 +612,18 @@ async def questionnaire_contribution(message: types.Message, state: FSMContext):
     await state.set_state(QuestionnaireStates.Q22_AdditionalFile)
 
 @router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q22_AdditionalFile))
+@router.message(F.content_type == types.ContentType.PHOTO, StateFilter(QuestionnaireStates.Q22_AdditionalFile))
 async def questionnaire_additional_file(message: types.Message, state: FSMContext):
-    file_id = message.document.file_id
+    if not is_allowed_file(message):
+        await message.answer("❌ Прикрепите изображение или PDF-документ.")
+        return
+
+    file_id = message.document.file_id if message.document else message.photo[-1].file_id
     await state.update_data(q22_additional_file=file_id)
 
     await message.answer("📝 Есть ли у вас другие важные обстоятельства, которые помогут С-Д принять правильное решение?")
     await state.set_state(QuestionnaireStates.Q23_FinalComment)
+
 
 
 @router.message(StateFilter(QuestionnaireStates.Q22_AdditionalFile))
@@ -526,8 +635,17 @@ async def skip_additional_file(message: types.Message, state: FSMContext):
 @router.message(StateFilter(QuestionnaireStates.Q23_FinalComment))
 async def questionnaire_final_comment(message: Message, state: FSMContext):
     await state.update_data(q23_final_comment=message.text)
-
     data = await state.get_data()
+
+    await message.answer("📂 Сохраняем данные анкеты в Google Drive...")
+
+    try:
+        await save_full_questionnaire_to_drive(data, message.bot)
+        await message.answer("✅ Анкета успешно сохранена в Google Drive.")
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка при сохранении в Google Drive:\n{e}")
+        print(f"Error details: {e}")
+
     summary = (
         "✅ Анкета завершена!\n\n"
         f"👤 ФИО: {data.get('q1_full_name')}\n"
@@ -540,6 +658,5 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
         f"📄 Комментарий: {data.get('q23_final_comment')}\n\n"
         "Данные сохранены. Мы свяжемся с вами после проверки!"
     )
-
     await message.answer(summary)
     await state.clear()

@@ -27,6 +27,6 @@ class QuestionnaireStates(StatesGroup):
     Q19_ChildrenDocs = State()
     Q20_HousingType = State()
     Q20_HousingDoc = State()
-    Q21_ContributionAmount = State()
+    Q21_Contribution = State()
     Q22_AdditionalFile = State()
     Q23_FinalComment = State() 
