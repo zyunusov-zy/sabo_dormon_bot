@@ -4,7 +4,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 from aiogram3_calendar.simple_calendar import SimpleCalendar, SimpleCalendarCallback
 
 from robot.utils.google_drive import save_full_questionnaire_to_drive
-
+from robot.utils.financial_score_calculator import calculate_final_conclusion, format_conclusion_message
 
 
 import re
@@ -421,25 +421,38 @@ async def questionnaire_need_docs(message: types.Message, state: FSMContext):
         await message.answer("📊 Укажите средний доход вашей семьи в месяц:", reply_markup=kb)
         await state.set_state(QuestionnaireStates.Q18_AvgIncome)
 
-
-@router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q17_ConfirmationFile))
+@router.message(
+    F.content_type.in_({types.ContentType.DOCUMENT, types.ContentType.PHOTO}),
+    StateFilter(QuestionnaireStates.Q17_ConfirmationFile)
+)
 async def questionnaire_confirm_doc(message: types.Message, state: FSMContext):
-    if not is_allowed_file(message):
-        await message.answer("❌ Прикрепите PDF или изображение справки о нуждаемости.")
+    file_id = None
+
+    if message.content_type == types.ContentType.DOCUMENT:
+        if not message.document.mime_type.startswith(("application/pdf", "image/")):
+            await message.answer("❌ Прикрепите PDF или изображение справки о нуждаемости.")
+            return
+        file_id = message.document.file_id
+
+    elif message.content_type == types.ContentType.PHOTO:
+        file_id = message.photo[-1].file_id
+
+    if not file_id:
+        await message.answer("❌ Не удалось получить файл. Прикрепите документ или фото.")
         return
 
-    file_id = message.document.file_id if message.document else message.photo[-1].file_id
     await state.update_data(q17_confirmation_file=file_id)
 
-    await message.answer("✅ Документ получен.\n\n📊 Укажите средний доход вашей семьи в месяц:")
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="До 5 млн"), KeyboardButton(text="5–7 млн")],
             [KeyboardButton(text="7–10 млн"), KeyboardButton(text="10+ млн")]
         ],
-        resize_keyboard=True, 
+        resize_keyboard=True,
         one_time_keyboard=True
     )
+
+    await message.answer("✅ Документ получен.\n\n📊 Укажите средний доход вашей семьи в месяц:")
     await message.answer("Выберите:", reply_markup=kb)
     await state.set_state(QuestionnaireStates.Q18_AvgIncome)
 
@@ -494,7 +507,7 @@ async def questionnaire_children_count(message: types.Message, state: FSMContext
     await state.update_data(q19_children_count=message.text)
 
     if message.text == "0":
-        await proceed_to_q20(message, state)
+        await proceed_to_q21(message, state)
     else:
         await state.update_data(q19_children_docs=[])
         await message.answer(
@@ -545,10 +558,33 @@ async def finish_children_upload(message: types.Message, state: FSMContext):
         return
 
     await message.answer("✅ Загрузка завершена.", reply_markup=ReplyKeyboardRemove())
-    await proceed_to_q20(message, state)
+    await proceed_to_q21(message, state)
 
 
-async def proceed_to_q20(message: types.Message, state: FSMContext):
+async def proceed_to_q21(message: types.Message, state: FSMContext):
+    options = ["☑️ Только муж", "☑️ Оба", "☑️ Никто", "☑️ Только жена", "☑️ Пенсионер"]
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=option)] for option in options],
+        resize_keyboard=True, 
+        one_time_keyboard=True
+    )
+
+    await message.answer("👨‍💼 Кто работает в семье?", reply_markup=kb)
+    await state.set_state(QuestionnaireStates.Q21_FamilyWork)
+
+
+@router.message(StateFilter(QuestionnaireStates.Q21_FamilyWork))
+async def questionnaire_family_work(message: types.Message, state: FSMContext):
+    options = ["☑️ Только муж", "☑️ Оба", "☑️ Никто", "☑️ Дети", "☑️ Родители"]
+    if message.text not in options:
+        await proceed_to_q21(message, state)
+        return
+
+    await state.update_data(q21_family_work=message.text)
+    await proceed_to_q22(message, state)
+
+
+async def proceed_to_q22(message: types.Message, state: FSMContext):
     options = ["☑️ Собственное", "☑️ Аренда", "☑️ У родственников"]
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=option)] for option in options],
@@ -557,84 +593,83 @@ async def proceed_to_q20(message: types.Message, state: FSMContext):
     )
 
     await message.answer("🏠 Какой у вас тип жилья?", reply_markup=kb)
-    await state.set_state(QuestionnaireStates.Q20_HousingType)
+    await state.set_state(QuestionnaireStates.Q22_HousingType)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q20_HousingType))
+@router.message(StateFilter(QuestionnaireStates.Q22_HousingType))
 async def questionnaire_housing_type(message: types.Message, state: FSMContext):
     options = ["☑️ Собственное", "☑️ Аренда", "☑️ У родственников"]
     if message.text not in options:
-        await proceed_to_q20(message, state)
+        await proceed_to_q22(message, state)
         return
 
-    await state.update_data(q20_housing_type=message.text)
+    await state.update_data(q22_housing_type=message.text)
 
     if message.text == "☑️ Аренда":
         await message.answer("📎 Прикрепите договор аренды или подтверждающий документ.", reply_markup=ReplyKeyboardRemove())
-        await state.set_state(QuestionnaireStates.Q20_HousingDoc)
+        await state.set_state(QuestionnaireStates.Q22_HousingDoc)
     else:
-        await proceed_to_q21(message, state)
+        await proceed_to_q23(message, state)
 
 
-@router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q20_HousingDoc))
-@router.message(F.content_type == types.ContentType.PHOTO, StateFilter(QuestionnaireStates.Q20_HousingDoc))
+@router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q22_HousingDoc))
+@router.message(F.content_type == types.ContentType.PHOTO, StateFilter(QuestionnaireStates.Q22_HousingDoc))
 async def questionnaire_housing_doc(message: types.Message, state: FSMContext):
     if not is_allowed_file(message):
         await message.answer("❌ Прикрепите изображение или PDF договора аренды.")
         return
 
     file_id = message.document.file_id if message.document else message.photo[-1].file_id
-    await state.update_data(q20_housing_doc=file_id)
+    await state.update_data(q22_housing_doc=file_id)
 
     await message.answer("✅ Документ по жилью получен.")
-    await proceed_to_q21(message, state)
+    await proceed_to_q23(message, state)
 
 
-
-async def proceed_to_q21(message: types.Message, state: FSMContext):
+async def proceed_to_q23(message: types.Message, state: FSMContext):
     await message.answer("💰 До какой суммы вы можете оплатить лечение? (в сумах)", reply_markup=ReplyKeyboardRemove())
-    await state.set_state(QuestionnaireStates.Q21_Contribution)
+    await state.set_state(QuestionnaireStates.Q23_Contribution)
 
 
-
-@router.message(StateFilter(QuestionnaireStates.Q21_Contribution))
+@router.message(StateFilter(QuestionnaireStates.Q23_Contribution))
 async def questionnaire_contribution(message: types.Message, state: FSMContext):
     amount = message.text.strip().replace(" ", "")
     if not amount.isdigit():
         await message.answer("❌ Введите только сумму в числовом формате, без текста.")
         return
 
-    await state.update_data(q21_contribution=amount)
+    await state.update_data(q23_contribution=amount)
     await message.answer(
         "📎 Прикрепите любой другой документ, подтверждающий ваши обстоятельства (по желанию).\n"
         "Вы можете пропустить этот шаг, отправив любое сообщение без файла."
     )
-    await state.set_state(QuestionnaireStates.Q22_AdditionalFile)
+    await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
 
-@router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q22_AdditionalFile))
-@router.message(F.content_type == types.ContentType.PHOTO, StateFilter(QuestionnaireStates.Q22_AdditionalFile))
+
+@router.message(F.content_type == types.ContentType.DOCUMENT, StateFilter(QuestionnaireStates.Q24_AdditionalFile))
+@router.message(F.content_type == types.ContentType.PHOTO, StateFilter(QuestionnaireStates.Q24_AdditionalFile))
 async def questionnaire_additional_file(message: types.Message, state: FSMContext):
     if not is_allowed_file(message):
         await message.answer("❌ Прикрепите изображение или PDF-документ.")
         return
 
     file_id = message.document.file_id if message.document else message.photo[-1].file_id
-    await state.update_data(q22_additional_file=file_id)
+    await state.update_data(q24_additional_file=file_id)
 
     await message.answer("📝 Есть ли у вас другие важные обстоятельства, которые помогут С-Д принять правильное решение?")
-    await state.set_state(QuestionnaireStates.Q23_FinalComment)
+    await state.set_state(QuestionnaireStates.Q25_FinalComment)
 
 
-
-@router.message(StateFilter(QuestionnaireStates.Q22_AdditionalFile))
+@router.message(StateFilter(QuestionnaireStates.Q24_AdditionalFile))
 async def skip_additional_file(message: types.Message, state: FSMContext):
-    await state.update_data(q22_additional_file=None)
+    await state.update_data(q24_additional_file=None)
     await message.answer("📝 Есть ли у вас другие важные обстоятельства, которые помогут С-Д принять правильное решение?")
-    await state.set_state(QuestionnaireStates.Q23_FinalComment)
+    await state.set_state(QuestionnaireStates.Q25_FinalComment)
 
-@router.message(StateFilter(QuestionnaireStates.Q23_FinalComment))
+
+@router.message(StateFilter(QuestionnaireStates.Q25_FinalComment))
 async def questionnaire_final_comment(message: Message, state: FSMContext):
-    await state.update_data(q23_final_comment=message.text)
+    await state.update_data(q25_final_comment=message.text)
     data = await state.get_data()
 
     await message.answer("📂 Сохраняем данные анкеты в Google Drive...")
@@ -646,17 +681,22 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
         await message.answer(f"⚠️ Ошибка при сохранении в Google Drive:\n{e}")
         print(f"Error details: {e}")
 
+    conclusion = calculate_final_conclusion(data)
+
     summary = (
-        "✅ Анкета завершена!\n\n"
-        f"👤 ФИО: {data.get('q1_full_name')}\n"
-        f"📅 Дата рождения: {data.get('q2_birth_date')}\n"
-        f"🧑 Пол: {data.get('q3_gender')}\n"
-        f"📞 Телефон: {data.get('q4_phone_number')}\n"
-        f"📲 Telegram: {data.get('q5_telegram_username')}\n"
-        f"🏠 Жильё: {data.get('q20_housing_type')}\n"
-        f"💰 Оплата: {data.get('q21_contribution')} сум\n"
-        f"📄 Комментарий: {data.get('q23_final_comment')}\n\n"
-        "Данные сохранены. Мы свяжемся с вами после проверки!"
+        "✅ <b>Анкета завершена!</b>\n\n"
+        f"👤 <b>ФИО:</b> {data.get('q1_full_name')}\n"
+        f"📅 <b>Дата рождения:</b> {data.get('q2_birth_date')}\n"
+        f"🧑 <b>Пол:</b> {data.get('q3_gender')}\n"
+        f"📞 <b>Телефон:</b> {data.get('q4_phone_number')}\n"
+        f"📲 <b>Telegram:</b> {data.get('q5_telegram_username')}\n"
+        f"👨‍👩‍👧‍👦 <b>Кто работает в семье:</b> {data.get('q21_family_work')}\n"
+        f"🏠 <b>Тип жилья:</b> {data.get('q22_housing_type')}\n"
+        f"💰 <b>Взнос:</b> {data.get('q23_contribution')} сум\n"
+        f"📄 <b>Комментарий:</b> {data.get('q25_final_comment')}\n"
     )
+
     await message.answer(summary)
+    await message.answer(format_conclusion_message(conclusion), parse_mode="HTML")
+
     await state.clear()
