@@ -69,6 +69,7 @@ async def process_simple_calendar(callback_query: types.CallbackQuery, callback_
 
         
 
+
 @router.message(StateFilter(QuestionnaireStates.Q3_Gender))
 async def questionnaire_gender(message: types.Message, state: FSMContext):
     gender = message.text.lower()
@@ -78,20 +79,76 @@ async def questionnaire_gender(message: types.Message, state: FSMContext):
 
     await state.update_data(q3_gender=gender.capitalize())
 
-    await message.answer("4️⃣ Введите номер телефона пациента:", reply_markup=ReplyKeyboardRemove())
+    phone_button = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📱 Отправить номер", request_contact=True)]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    await message.answer("4️⃣ Пожалуйста, отправьте номер телефона пациента через кнопку ниже:", reply_markup=phone_button)
     await state.set_state(QuestionnaireStates.Q4_PhoneNumber)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q4_PhoneNumber))
-async def questionnaire_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip()
-    if not re.match(r"^\+?\d{9,15}$", phone):
-        await message.answer("❌ Введите номер телефона в международном формате (например: +998901234567).")
+@router.message(StateFilter(QuestionnaireStates.Q4_PhoneNumber), F.contact)
+async def questionnaire_phone_contact(message: types.Message, state: FSMContext):
+    contact = message.contact
+    await state.update_data(q4_phone_number=contact.phone_number)
+
+    username_button = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="👤 Отправить Telegram username")]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    await message.answer("5️⃣ Пожалуйста, отправьте ваш Telegram username через кнопку ниже:", reply_markup=username_button)
+    await state.set_state(QuestionnaireStates.Q5_TelegramUsername)
+
+
+@router.message(StateFilter(QuestionnaireStates.Q5_TelegramUsername))
+async def questionnaire_username(message: types.Message, state: FSMContext):
+    if message.text == "👤 Отправить Telegram username":
+        tg_username = message.from_user.username
+        if tg_username:
+            username = f"@{tg_username}"
+            await state.update_data(q5_telegram_username=username)
+
+            await message.answer(f"✅ Ваш Telegram username: {username}")
+
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text=region)] for region in regions],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+
+            await message.answer("6️⃣ Выберите регион проживания или прописки 📍:", reply_markup=keyboard)
+            await state.set_state(QuestionnaireStates.Q6_Region)
+            return
+
+        await message.answer(
+            "❗ У вас не установлен Telegram username.\n"
+            "Пожалуйста, введите его вручную (например: @yourname):",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return
 
-    await state.update_data(q4_phone_number=phone)
-    await message.answer("5️⃣ Введите ваш Telegram username (начиная с @):")
-    await state.set_state(QuestionnaireStates.Q5_TelegramUsername)
+    # Ручной ввод
+    username = message.text.strip()
+    if not re.match(r"^@[\w\d_]{5,}$", username):
+        await message.answer("❌ Введите корректный Telegram username, начинающийся с @.")
+        return
+
+    await state.update_data(q5_telegram_username=username)
+
+    await message.answer(f"✅ Ваш Telegram username: {username}")
+
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=region)] for region in regions],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    await message.answer("6️⃣ Выберите регион проживания или прописки 📍:", reply_markup=keyboard)
+    await state.set_state(QuestionnaireStates.Q6_Region)
 
 
 regions = ["Ташкент", "Самарканд", "Фергана", "Андижан", "Бухара", "Хорезм", "Навои", "Наманган", "Кашкадарья", "Сурхандарья", "Сырдарья", "Джизак", "Каракалпакстан"]
@@ -672,13 +729,13 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
     await state.update_data(q25_final_comment=message.text)
     data = await state.get_data()
 
-    await message.answer("📂 Сохраняем данные анкеты в Google Drive...")
+    await message.answer("📂 Сохраняем данные анкеты...")
 
     try:
         await save_full_questionnaire_to_drive(data, message.bot)
-        await message.answer("✅ Анкета успешно сохранена в Google Drive.")
+        await message.answer("✅ Анкета успешно сохранена.")
     except Exception as e:
-        await message.answer(f"⚠️ Ошибка при сохранении в Google Drive:\n{e}")
+        await message.answer(f"⚠️ Ошибка при сохранении:\n")
         print(f"Error details: {e}")
 
     conclusion = calculate_final_conclusion(data)
