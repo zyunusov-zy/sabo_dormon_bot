@@ -6,13 +6,12 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from aiogram import Bot
 
-load_dotenv()
+load_dotenv(dotenv_path=".env", override=True)
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 SERVICE_ACCOUNT_PATH = os.getenv('GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH')
 PARENT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_PARENT_FOLDER_ID")
 
-# Все поля: текстовые + файлы
 QUESTION_LABELS = {
     "q1_full_name": "ФИО",
     "q2_birth_date": "Дата рождения",
