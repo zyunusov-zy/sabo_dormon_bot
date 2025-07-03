@@ -6,41 +6,63 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from aiogram import Bot
 
-load_dotenv()
+load_dotenv(dotenv_path=".env", override=True)
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 SERVICE_ACCOUNT_PATH = os.getenv('GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH')
 PARENT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_PARENT_FOLDER_ID")
 
+QUESTION_LABELS = {
+    "q1_full_name": "ФИО",
+    "q2_birth_date": "Дата рождения",
+    "q3_gender": "Пол",
+    "q4_phone_number": "Телефон",
+    "q5_telegram_username": "Telegram",
+    "q6_region": "Регион",
+    "q7_who_applies": "Кто обращается за помощью",
+    "q8_is_sabodarmon": "Пациент Sabo?",
+    "q9_source_info": "Как узнали о нас?",
+    "q10_has_diagnosis": "Есть ли диагноз?",
+    "q11_diagnosis_text": "Укажите диагноз",
+    "q13_complaint": "Какие жалобы?",
+    "q14_main_discomfort": "Что мешает больше всего?",
+    "q15_improvements": "Что улучшится после лечения?",
+    "q16_consequences": "Что будет, если не лечиться?",
+    "q17_need_confirmation": "Нужны подтверждающие документы?",
+    "q18_avg_income": "Средний доход на члена семьи (в млн сум)",
+    "q19_children_count": "Сколько детей в семье?",
+    "q21_family_work": "Кто работает в семье?",
+    "q22_housing_type": "Какое у вас жильё?",
+    "q23_contribution": "Какую сумму вы готовы внести?",
+    "q25_final_comment": "Комментарий к заявке",
+
+    # Файлы
+    "q12_diagnosis_file_id": "📎 Диагноз (файл)",
+    "q17_confirmation_file": "📎 Подтверждающие документы (файл)",
+    "q18_income_doc": "📎 Справка о доходах (файл)",
+    "q19_children_docs": "📎 Документы на детей (файлы)",
+    "q22_housing_doc": "📎 Документ на жильё (файл)",
+    "q24_additional_file": "📎 Дополнительный файл", #исправить
+}
 
 QUESTION_FILE_KEYS = {
-    "q12_diagnosis_file_id": "Q12_DiagnosisFile",
-    "q17_confirmation_file": "Q17_ConfirmationFile",
-    "q18_income_doc": "Q18_IncomeDoc",
-    "q19_children_docs": "Q19_ChildrenDocs",
-    "q20_housing_doc": "Q20_HousingDoc",
-    "q22_additional_file": "Q22_AdditionalFile"
+    "q12_diagnosis_file_id": "📎 Диагноз (файл)",
+    "q17_confirmation_file": "📎 Подтверждающие документы (файл)",
+    "q18_income_doc": "📎 Справка о доходах (файл)",
+    "q19_children_docs": "📎 Документы на детей (файлы)",
+    "q22_housing_doc": "📎 Документ на жильё (файл)",
+    "q24_additional_file": "📎 Дополнительный файл",
 }
 
 def get_drive_service():
-    print(f"SERVICE_ACCOUNT_PATH: {SERVICE_ACCOUNT_PATH}")
-    print(f"SERVICE_ACCOUNT_PATH exists: {os.path.exists(SERVICE_ACCOUNT_PATH) if SERVICE_ACCOUNT_PATH else False}")
-    
     if not SERVICE_ACCOUNT_PATH:
         raise ValueError("❌ GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH not set in .env file")
     
     if not os.path.exists(SERVICE_ACCOUNT_PATH):
         raise FileNotFoundError(f"❌ Service account file not found: {SERVICE_ACCOUNT_PATH}")
     
-    print("Using Service Account authentication")
-    try:
-        creds = ServiceAccountCredentials.from_service_account_file(SERVICE_ACCOUNT_PATH, scopes=SCOPES)
-        service = build('drive', 'v3', credentials=creds)
-        print("✅ Google Drive service authenticated successfully")
-        return service
-    except Exception as e:
-        print(f"❌ Error creating Google Drive service: {e}")
-        raise
+    creds = ServiceAccountCredentials.from_service_account_file(SERVICE_ACCOUNT_PATH, scopes=SCOPES)
+    return build('drive', 'v3', credentials=creds)
 
 def create_folder(name: str, parent_id: str = None) -> str:
     service = get_drive_service()
@@ -72,7 +94,7 @@ async def save_file_by_id(file_id: str, folder_id: str, filename: str, bot: Bot)
         file_path = file.file_path
         file_bytes = await bot.download_file(file_path)
         ext = os.path.splitext(file_path)[-1] or ".bin"
-        
+
         mime_type = "application/octet-stream"
         if ext.lower() in ['.jpg', '.jpeg']:
             mime_type = "image/jpeg"
@@ -94,42 +116,46 @@ async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot):
     try:
         full_name = user_data.get('q1_full_name', 'Пациент')
         root_folder_name = f"Анкета пациента – {full_name}"
-        
-        print(f"Creating root folder: {root_folder_name}")
         root_folder_id = create_folder(root_folder_name, parent_id=PARENT_FOLDER_ID)
-        print(f"Root folder created with ID: {root_folder_id}")
-
+        
+        
         text_parts = []
+        
+        if full_name:
+            text_parts.append(f"ФИО: {full_name}")
+        
         for key, value in user_data.items():
-            if key not in QUESTION_FILE_KEYS and not isinstance(value, list):
-                text_parts.append(f"{key}: {value}")
+            if key == "q1_full_name" or key == "full_name":
+                continue
+            label = QUESTION_LABELS.get(key, key)
+
+            # 📎 Файловые поля
+            if key in QUESTION_FILE_KEYS:
+                if isinstance(value, list):
+                    text_parts.append(f"{label}: {len(value)} файл(ов) ✅")
+                else:
+                    text_parts.append(f"{label}: Есть файл ✅" if value else f"{label}: —")
+            else:
+                text_parts.append(f"{label}: {value}")
+
         full_text = "\n".join(text_parts)
+        upload_text_to_drive(full_text, "Анкета.txt", folder_id=root_folder_id)
 
-        print("Uploading questionnaire text file...")
-        text_file_id = upload_text_to_drive(full_text, "Анкета.txt", folder_id=root_folder_id)
-        print(f"Text file uploaded with ID: {text_file_id}")
-
+        # Загружаем вложения
         for field, folder_name in QUESTION_FILE_KEYS.items():
             file_value = user_data.get(field)
             if not file_value:
                 continue
 
-            print(f"Processing files for {field}: {file_value}")
             subfolder_id = create_folder(folder_name, parent_id=root_folder_id)
-            print(f"Created subfolder {folder_name} with ID: {subfolder_id}")
 
             if isinstance(file_value, list):
                 for idx, file_id in enumerate(file_value):
                     if file_id:
                         await save_file_by_id(file_id, subfolder_id, f"{folder_name}_{idx+1}", bot)
-                        print(f"Uploaded file {idx+1} for {field}")
             else:
-                if file_value:
-                    await save_file_by_id(file_value, subfolder_id, folder_name, bot)
-                    print(f"Uploaded single file for {field}")
-        
-        print("All files uploaded successfully!")
-        
+                await save_file_by_id(file_value, subfolder_id, folder_name, bot)
+
     except Exception as e:
-        print(f"Error in save_full_questionnaire_to_drive: {e}")
+        print(f"❌ Error in save_full_questionnaire_to_drive: {e}")
         raise
