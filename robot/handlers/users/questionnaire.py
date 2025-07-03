@@ -89,6 +89,10 @@ def get_previous_state(current_state: str, user_data: dict = None) -> str:
             
         elif current_state == "Q23_ContributionConfirm":
             return "Q23_Contribution"
+        elif current_state == "Q24_AdditionalFile":
+            return "Q23_Contribution"
+        elif current_state == "Q25_FinalComment":
+            return "Q24_AdditionalFile"
             
         return STATE_ORDER[current_index - 1]
         
@@ -293,7 +297,13 @@ def get_back_only_keyboard() -> ReplyKeyboardMarkup:
 async def proceed_with_keyboard(state_name: str, message: types.Message, state: FSMContext):
     label = get_question_label(state_name)
     kb = get_keyboard_for(state_name)
-    await message.answer(label, reply_markup=kb if kb else ReplyKeyboardRemove())
+    if state_name == "Q25_FinalComment":
+        await message.answer(
+            label,
+            reply_markup=kb if kb else get_back_only_keyboard()
+        )
+    else:
+        await message.answer(label, reply_markup=kb if kb else ReplyKeyboardRemove())
     await state.set_state(getattr(QuestionnaireStates, state_name))
 
 
