@@ -19,6 +19,277 @@ router = Router()
 
 regions = ["Ташкент", "Самарканд", "Фергана", "Андижан", "Бухара", "Хорезм", "Навои", "Наманган", "Кашкадарья", "Сурхандарья", "Сырдарья", "Джизак", "Каракалпакстан"]
 
+STATE_ORDER = [
+    "ConfirmRules",
+    "Q1_FullName", 
+    "Q2_BirthDate",
+    "Q3_Gender",
+    "Q4_PhoneNumber", 
+    "Q5_TelegramUsername",
+    "Q6_Region",
+    "Q7_WhoApplies",
+    "Q8_SaboPatient",
+    "Q9_HowFound",
+    "Q10_HasDiagnosis",
+    "Q11_DiagnosisText",
+    "Q12_DiagnosisFile", 
+    "Q13_Complaint",
+    "Q14_MainDiscomfort",
+    "Q14_MainDiscomfortOther",
+    "Q15_ImprovementsAfterTreatment",
+    "Q16_WithoutTreatmentConsequences", 
+    "Q17_NeedConfirmationDocs",
+    "Q17_ConfirmationFile",
+    "Q18_AvgIncome",
+    "Q18_IncomeDoc",
+    "Q19_ChildrenCount",
+    "Q19_ChildrenDocs",
+    "Q21_FamilyWork",
+    "Q22_HousingType",
+    "Q22_HousingDoc",
+    "Q23_Contribution",
+    "Q23_ContributionConfirm",
+    "Q24_AdditionalFile",
+    "Q25_FinalComment"
+]
+
+def get_previous_state(current_state: str, user_data: dict = None) -> str:
+    """Получить предыдущее состояние с учетом логики пропуска"""
+    try:
+        current_index = STATE_ORDER.index(current_state)
+        if current_index <= 1:  # ConfirmRules или Q1_FullName
+            return None
+            
+        # Логика для состояний с условными переходами
+        if current_state == "Q13_Complaint":
+            # Если диагноза нет, возвращаемся к Q10_HasDiagnosis
+            if user_data and user_data.get("q10_has_diagnosis") == "❌ Нет":
+                return "Q10_HasDiagnosis"
+            else:
+                return "Q12_DiagnosisFile"
+                
+        elif current_state == "Q17_ConfirmationFile":
+            return "Q17_NeedConfirmationDocs"
+            
+        elif current_state == "Q18_IncomeDoc":
+            return "Q18_AvgIncome"
+            
+        elif current_state == "Q19_ChildrenDocs":
+            return "Q19_ChildrenCount"
+            
+        elif current_state == "Q21_FamilyWork":
+            # Если детей нет, возвращаемся к Q19_ChildrenCount
+            if user_data and user_data.get("q19_children_count") == "0":
+                return "Q19_ChildrenCount"
+            else:
+                return "Q19_ChildrenDocs"
+                
+        elif current_state == "Q22_HousingDoc":
+            return "Q22_HousingType"
+            
+        elif current_state == "Q23_ContributionConfirm":
+            return "Q23_Contribution"
+            
+        return STATE_ORDER[current_index - 1]
+        
+    except ValueError:
+        return None
+
+async def handle_back_button(message: types.Message, state: FSMContext):
+    """Обработка нажатия кнопки Назад"""
+    current_state = await state.get_state()
+    user_data = await state.get_data()
+    
+    # Получаем имя состояния без префикса
+    state_name = current_state.split(":")[-1] if ":" in current_state else current_state
+    
+    previous_state = get_previous_state(state_name, user_data)
+    
+    if not previous_state:
+        await message.answer("❌ Нельзя вернуться назад с первого вопроса.")
+        return False
+        
+    # Очищаем данные текущего вопроса при возврате назад
+    clear_current_data(state_name, user_data)
+    await state.update_data(**user_data)
+    
+    # Переходим к предыдущему состоянию
+    await navigate_to_state(previous_state, message, state)
+    return True
+
+def clear_current_data(state_name: str, user_data: dict):
+    """Очистка данных текущего состояния при возврате"""
+    state_to_data_map = {
+        "Q2_BirthDate": "q2_birth_date",
+        "Q3_Gender": "q3_gender", 
+        "Q4_PhoneNumber": "q4_phone_number",
+        "Q5_TelegramUsername": "q5_telegram_username",
+        "Q6_Region": "q6_region",
+        "Q7_WhoApplies": "q7_who_applies",
+        "Q8_SaboPatient": "q8_is_sabodarmon",
+        "Q9_HowFound": "q9_source_info",
+        "Q10_HasDiagnosis": "q10_has_diagnosis",
+        "Q11_DiagnosisText": "q11_diagnosis_text",
+        "Q12_DiagnosisFile": "q12_diagnosis_file_id",
+        "Q13_Complaint": "q13_complaint",
+        "Q14_MainDiscomfort": "q14_main_discomfort",
+        "Q15_ImprovementsAfterTreatment": "q15_improvements",
+        "Q16_WithoutTreatmentConsequences": "q16_consequences",
+        "Q17_NeedConfirmationDocs": "q17_need_confirmation",
+        "Q17_ConfirmationFile": "q17_confirmation_file",
+        "Q18_AvgIncome": "q18_avg_income",
+        "Q18_IncomeDoc": "q18_income_doc",
+        "Q19_ChildrenCount": "q19_children_count",
+        "Q19_ChildrenDocs": "q19_children_docs",
+        "Q21_FamilyWork": "q21_family_work",
+        "Q22_HousingType": "q22_housing_type",
+        "Q22_HousingDoc": "q22_housing_doc",
+        "Q23_Contribution": "q23_contribution",
+        "Q24_AdditionalFile": "q24_additional_file",
+        "Q25_FinalComment": "q25_final_comment"
+    }
+    
+    data_key = state_to_data_map.get(state_name)
+    if data_key and data_key in user_data:
+        del user_data[data_key]
+
+
+
+async def navigate_to_state(state_name: str, message: types.Message, state: FSMContext):
+    """Навигация к определенному состоянию"""
+    user_data = await state.get_data()
+    
+    if state_name == "Q2_BirthDate":
+        label = get_question_label("Q2_BirthDate")
+        await message.answer(label, reply_markup=await SimpleCalendar().start_calendar())
+        await state.set_state(QuestionnaireStates.Q2_BirthDate)
+        
+    elif state_name == "Q4_PhoneNumber":
+        label = get_question_label("Q4_PhoneNumber")
+        phone_button = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="📱 Отправить номер", request_contact=True)], [KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        await message.answer(label, reply_markup=phone_button)
+        await state.set_state(QuestionnaireStates.Q4_PhoneNumber)
+        
+    elif state_name == "Q5_TelegramUsername":
+        label = get_question_label("Q5_TelegramUsername")
+        username_button = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="👤 Отправить Telegram username")], [KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        await message.answer(label, reply_markup=username_button)
+        await state.set_state(QuestionnaireStates.Q5_TelegramUsername)
+        
+    elif state_name == "Q11_DiagnosisText":
+        await message.answer(get_question_label("Q11_DiagnosisText"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q11_DiagnosisText)
+        
+    elif state_name == "Q12_DiagnosisFile":
+        await message.answer(get_question_label("Q12_DiagnosisFile"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q12_DiagnosisFile)
+        
+    elif state_name == "Q13_Complaint":
+        await message.answer(get_question_label("Q13_Complaint"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q13_Complaint)
+        
+    elif state_name == "Q14_MainDiscomfortOther":
+        await message.answer("📝 Уточните, что именно вам мешает:", reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q14_MainDiscomfortOther)
+        
+    elif state_name == "Q15_ImprovementsAfterTreatment":
+        await state.update_data(q15_improvements=[])
+        await proceed_to_q15(message, state)
+        
+    elif state_name == "Q16_WithoutTreatmentConsequences":
+        await state.update_data(q16_consequences=[])
+        await proceed_to_q16(message, state)
+        
+    elif state_name == "Q17_ConfirmationFile":
+        await message.answer(get_question_label("Q17_ConfirmationFile"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q17_ConfirmationFile)
+        
+    elif state_name == "Q18_IncomeDoc":
+        await message.answer(get_question_label("Q18_IncomeDoc"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q18_IncomeDoc)
+        
+    elif state_name == "Q19_ChildrenDocs":
+        await state.update_data(q19_children_docs=[])
+        await message.answer(get_question_label("Q19_ChildrenDocs"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="✅ Завершить загрузку")], [KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q19_ChildrenDocs)
+        
+    elif state_name == "Q22_HousingDoc":
+        await message.answer(get_question_label("Q22_HousingDoc"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q22_HousingDoc)
+        
+    elif state_name == "Q23_Contribution":
+        await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q23_Contribution)
+        
+    elif state_name == "Q24_AdditionalFile":
+        await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
+        
+    elif state_name == "Q25_FinalComment":
+        await message.answer(get_question_label("Q25_FinalComment"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q25_FinalComment)
+        
+    else:
+        # Для остальных состояний используем стандартную функцию
+        await proceed_with_keyboard(state_name, message, state)
+
+@router.message(F.text == "⬅️ Назад")
+async def handle_back_navigation(message: types.Message, state: FSMContext):
+    await handle_back_button(message, state)
+
+
+
+def get_back_only_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+
+
+
 async def proceed_with_keyboard(state_name: str, message: types.Message, state: FSMContext):
     label = get_question_label(state_name)
     kb = get_keyboard_for(state_name)
@@ -37,10 +308,19 @@ async def confirm_rules(message: types.Message, state: FSMContext):
 
 @router.message(StateFilter(QuestionnaireStates.Q1_FullName))
 async def questionnaire_full_name(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await message.answer("⛔ Вы на первом шаге. Назад невозможно.")
+        return
+    
     await state.update_data(q1_full_name=message.text)
 
     label = get_question_label("Q2_BirthDate")
-    await message.answer(label, reply_markup=await SimpleCalendar().start_calendar())
+    
+    await message.answer(label, reply_markup=get_back_only_keyboard())
+    
+    calendar = await SimpleCalendar().start_calendar()
+    await message.answer("📅 Выберите дату рождения ниже:", reply_markup=calendar)
+
     await state.set_state(QuestionnaireStates.Q2_BirthDate)
 
 
@@ -70,6 +350,10 @@ async def process_simple_calendar(callback_query: types.CallbackQuery, callback_
 
 @router.message(StateFilter(QuestionnaireStates.Q3_Gender))
 async def questionnaire_gender(message: types.Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await handle_back_button(message, state)
+        return
+        
     gender = message.text.lower()
     if gender not in ["мужской", "женский"]:
         await message.answer("❌ Пожалуйста, выберите один из вариантов: Мужской или Женский.")
@@ -79,7 +363,10 @@ async def questionnaire_gender(message: types.Message, state: FSMContext):
 
     label = get_question_label("Q4_PhoneNumber")
     phone_button = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📱 Отправить номер", request_contact=True)]],
+        keyboard=[
+            [KeyboardButton(text="📱 Отправить номер", request_contact=True)], 
+            [KeyboardButton(text="⬅️ Назад")]
+        ],
         resize_keyboard=True,
         one_time_keyboard=True
     )
@@ -96,7 +383,10 @@ async def questionnaire_phone_contact(message: types.Message, state: FSMContext)
 
     label = get_question_label("Q5_TelegramUsername")
     username_button = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="👤 Отправить Telegram username")]],
+        keyboard=[
+            [KeyboardButton(text="👤 Отправить Telegram username")],
+            [KeyboardButton(text="⬅️ Назад")]
+        ],
         resize_keyboard=True,
         one_time_keyboard=True
     )
@@ -205,7 +495,7 @@ async def questionnaire_has_diagnosis(message: types.Message, state: FSMContext)
     await state.update_data(q10_has_diagnosis=answer)
 
     if answer == "✅ Да":
-        await message.answer(get_question_label("Q11_DiagnosisText"), reply_markup=ReplyKeyboardRemove())
+        await message.answer(get_question_label("Q11_DiagnosisText"), reply_markup=get_back_only_keyboard())
         await state.set_state(QuestionnaireStates.Q11_DiagnosisText)
     else:
         await message.answer("📎 Прикрепление файла не требуется.", reply_markup=ReplyKeyboardRemove())
@@ -216,7 +506,7 @@ async def questionnaire_has_diagnosis(message: types.Message, state: FSMContext)
 async def questionnaire_diagnosis_text(message: types.Message, state: FSMContext):
     await state.update_data(q11_diagnosis_text=message.text)
 
-    await message.answer(get_question_label("Q12_DiagnosisFile"))
+    await message.answer(get_question_label("Q12_DiagnosisFile"), reply_markup=get_back_only_keyboard())
     await state.set_state(QuestionnaireStates.Q12_DiagnosisFile)
 
 @router.message(F.content_type.in_({types.ContentType.DOCUMENT, types.ContentType.PHOTO}), StateFilter(QuestionnaireStates.Q12_DiagnosisFile))
@@ -358,7 +648,7 @@ async def questionnaire_need_docs(message: types.Message, state: FSMContext):
     await state.update_data(q17_need_confirmation=user_choice)
 
     if user_choice == "☑️ Да, есть":
-        await message.answer(get_question_label("Q17_ConfirmationFile"), reply_markup=ReplyKeyboardRemove())
+        await message.answer(get_question_label("Q17_ConfirmationFile"), reply_markup=get_back_only_keyboard())
         await state.set_state(QuestionnaireStates.Q17_ConfirmationFile)
     else:
         await proceed_to_q18(message, state)
@@ -398,7 +688,7 @@ async def questionnaire_avg_income(message: types.Message, state: FSMContext):
         return
 
     await state.update_data(q18_avg_income=user_choice)
-    await message.answer(get_question_label("Q18_IncomeDoc"), reply_markup=ReplyKeyboardRemove())
+    await message.answer(get_question_label("Q18_IncomeDoc"), reply_markup=get_back_only_keyboard())
     await state.set_state(QuestionnaireStates.Q18_IncomeDoc)
 
 
@@ -439,7 +729,11 @@ async def questionnaire_children_count(message: types.Message, state: FSMContext
     else:
         await state.update_data(q19_children_docs=[])
         await message.answer(get_question_label("Q19_ChildrenDocs"), reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="✅ Завершить загрузку")]],
+            keyboard=[
+                [KeyboardButton(text="✅ Завершить загрузку")],
+                [KeyboardButton(text="⬅️ Назад")]
+                ],
+            
             resize_keyboard=True
         ))
         await state.set_state(QuestionnaireStates.Q19_ChildrenDocs)
@@ -498,7 +792,7 @@ async def questionnaire_housing_type(message: types.Message, state: FSMContext):
     await state.update_data(q22_housing_type=choice)
 
     if choice == "☑️ Аренда":
-        await message.answer(get_question_label("Q22_HousingDoc"), reply_markup=ReplyKeyboardRemove())
+        await message.answer(get_question_label("Q22_HousingDoc"), reply_markup=get_back_only_keyboard())
         await state.set_state(QuestionnaireStates.Q22_HousingDoc)
     else:
         await proceed_to_q23(message, state)
@@ -519,7 +813,7 @@ async def questionnaire_housing_doc(message: types.Message, state: FSMContext):
     await proceed_to_q23(message, state)
 
 async def proceed_to_q23(message: types.Message, state: FSMContext):
-    await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardRemove())
+    await message.answer(get_question_label("Q23_Contribution"), reply_markup=get_back_only_keyboard())
     await state.set_state(QuestionnaireStates.Q23_Contribution)
 
 
@@ -554,7 +848,7 @@ async def questionnaire_contribution_confirm(message: types.Message, state: FSMC
     confirm, retry = flow["confirm_buttons"]
 
     if message.text == confirm:
-        await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=ReplyKeyboardRemove())
+        await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=get_back_only_keyboard())
         await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
 
     elif message.text == retry:
