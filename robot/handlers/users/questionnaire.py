@@ -292,7 +292,22 @@ def get_back_only_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+@router.message(
+    StateFilter(
+        QuestionnaireStates.Q12_DiagnosisFile,
+        QuestionnaireStates.Q17_ConfirmationFile,
+        QuestionnaireStates.Q18_IncomeDoc,
+        QuestionnaireStates.Q22_HousingDoc,
+    ),
+    ~F.content_type.in_({types.ContentType.DOCUMENT, types.ContentType.PHOTO})
+)
+async def invalid_file_input(message: types.Message):
+    await message.answer("❌ Пожалуйста, прикрепите файл как PDF-документ или фото, а не отправляйте текст, аудио или голосовое.")
 
+@router.message(StateFilter(QuestionnaireStates.Q1_FullName, QuestionnaireStates.Q11_DiagnosisText,QuestionnaireStates.Q13_Complaint, QuestionnaireStates.Q25_FinalComment),
+                ~(F.content_type == types.ContentType.TEXT))
+async def invalid_diagnosis_text_input(message: types.Message):
+    await message.answer("❌ Пожалуйста, введите диагноз ТЕКСТОМ, а не отправляйте файл, голосовое или фото.")
 
 async def proceed_with_keyboard(state_name: str, message: types.Message, state: FSMContext):
     label = get_question_label(state_name)
@@ -316,7 +331,10 @@ async def confirm_rules(message: types.Message, state: FSMContext):
     else:
         await message.answer("⚠️ Вы должны подтвердить условия участия для продолжения.")
 
-@router.message(StateFilter(QuestionnaireStates.Q1_FullName))
+@router.message(
+    StateFilter(QuestionnaireStates.Q1_FullName),
+    F.content_type == types.ContentType.TEXT
+)
 async def questionnaire_full_name(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад":
         await message.answer("⛔ Вы на первом шаге. Назад невозможно.")
@@ -389,6 +407,10 @@ async def questionnaire_gender(message: types.Message, state: FSMContext):
 @router.message(StateFilter(QuestionnaireStates.Q4_PhoneNumber), F.content_type == types.ContentType.CONTACT)
 async def questionnaire_phone_contact(message: types.Message, state: FSMContext):
     contact = message.contact
+    if contact.user_id != message.from_user.id:
+        await message.answer("❌ Пожалуйста, отправьте СВОЙ номер через кнопку: '📱 Отправить номер'.")
+        return
+
     await state.update_data(q4_phone_number=contact.phone_number)
 
     label = get_question_label("Q5_TelegramUsername")
@@ -512,12 +534,17 @@ async def questionnaire_has_diagnosis(message: types.Message, state: FSMContext)
         await message.answer(get_question_label("Q13_Complaint"))
         await state.set_state(QuestionnaireStates.Q13_Complaint)
 
-@router.message(StateFilter(QuestionnaireStates.Q11_DiagnosisText))
+@router.message(StateFilter(QuestionnaireStates.Q11_DiagnosisText), F.content_type == types.ContentType.TEXT)
 async def questionnaire_diagnosis_text(message: types.Message, state: FSMContext):
-    await state.update_data(q11_diagnosis_text=message.text)
+    await state.update_data(q11_diagnosis_text=message.text.strip())
 
     await message.answer(get_question_label("Q12_DiagnosisFile"), reply_markup=get_back_only_keyboard())
     await state.set_state(QuestionnaireStates.Q12_DiagnosisFile)
+
+
+@router.message(StateFilter(QuestionnaireStates.Q11_DiagnosisText))
+async def invalid_diagnosis_text_input(message: types.Message):
+    await message.answer("❌ Пожалуйста, введите диагноз ТЕКСТОМ, а не отправляйте голосовое или файл.")
 
 @router.message(F.content_type.in_({types.ContentType.DOCUMENT, types.ContentType.PHOTO}), StateFilter(QuestionnaireStates.Q12_DiagnosisFile))
 async def questionnaire_diagnosis_file(message: types.Message, state: FSMContext):
@@ -532,7 +559,7 @@ async def questionnaire_diagnosis_file(message: types.Message, state: FSMContext
     await state.set_state(QuestionnaireStates.Q13_Complaint)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q13_Complaint))
+@router.message(StateFilter(QuestionnaireStates.Q13_Complaint), F.content_type == types.ContentType.TEXT)
 async def questionnaire_complaint(message: types.Message, state: FSMContext):
     await state.update_data(q13_complaint=message.text)
 
@@ -891,7 +918,7 @@ async def skip_additional_file(message: types.Message, state: FSMContext):
     await proceed_with_keyboard("Q25_FinalComment", message, state)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q25_FinalComment))
+@router.message(StateFilter(QuestionnaireStates.Q25_FinalComment),  F.content_type == types.ContentType.TEXT)
 async def questionnaire_final_comment(message: Message, state: FSMContext):
     await state.update_data(q25_final_comment=message.text)
     data = await state.get_data()
