@@ -1,25 +1,10 @@
 from django.db import models
-from django.contrib.auth import get_user_model
 
+class BotUser(models.Model):
+    telegram_id = models.BigIntegerField(unique=True)
+    full_name = models.CharField(max_length=255)
+    phone_number = models.CharField(max_length=20)
+    created_at = models.DateTimeField(auto_now_add=True)
 
-class TelegramUser(models.Model):
-    user = models.OneToOneField(
-        to=get_user_model(),
-        on_delete=models.CASCADE,
-        blank=True,
-        null=True,
-        related_name='telegram_user'
-    )
-    chat_id = models.CharField(
-        max_length=20
-    )
-
-    def __str__(self) -> str:
-        return self.chat_id
-
-    def get_user(self):
-        return self.user
-
-    def set_user(self, user):
-        self.user = user
-        self.save()
+    def __str__(self):
+        return f"{self.full_name} ({self.phone_number})"

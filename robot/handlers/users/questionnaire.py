@@ -445,18 +445,34 @@ async def questionnaire_username(message: types.Message, state: FSMContext):
         await state.update_data(q5_telegram_username=username)
 
     label = get_question_label("Q6_Region")
-    keyboard = get_keyboard_for("Q6_Region")
-    await message.answer(label, reply_markup=keyboard)
+    instruction = (
+        f"{label}\n\n"
+        "📎 Нажмите на скрепку в Telegram и выберите **«Локация» → «Отправить местоположение»**.\n"
+        "👉 Обязательно **выберите точку вручную на карте**, а не отправляйте текущее GPS."
+    )
+    await message.answer(instruction, reply_markup=get_back_only_keyboard(), parse_mode="Markdown")
     await state.set_state(QuestionnaireStates.Q6_Region)
 
 
 @router.message(StateFilter(QuestionnaireStates.Q6_Region))
-async def questionnaire_region(message: types.Message, state: FSMContext):
-    if message.text not in regions:
-        await message.answer("❌ Пожалуйста, выберите один из предложенных регионов.")
+async def questionnaire_location(message: types.Message, state: FSMContext):
+    if not message.location:
+        await message.answer("❗ Пожалуйста, используйте кнопку ниже, чтобы отправить точку на карте, где вы проживаете.")
         return
 
-    await state.update_data(q6_region=message.text)
+    lat = message.location.latitude
+    lon = message.location.longitude
+    location_str = f"{lat},{lon}"
+
+    await state.update_data(q6_region=location_str)
+
+    map_url = f"https://yandex.uz/maps/10335/tashkent/?mode=search&text={lat}%2C{lon}&z=17"
+    await message.answer(
+        f"✅ Локация проживания сохранена: `{location_str}`\n🗺 [Открыть в Яндекс.Картах]({map_url})",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
     label = get_question_label("Q7_WhoApplies")
     keyboard = get_keyboard_for("Q7_WhoApplies")
     await message.answer(label, reply_markup=keyboard)
