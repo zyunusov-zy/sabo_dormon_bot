@@ -3,12 +3,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, Message
 from aiogram3_calendar.simple_calendar import SimpleCalendar, SimpleCalendarCallback
 from aiogram.filters import StateFilter
-from robot.utils.google_drive import save_full_questionnaire_to_drive
+from datetime import datetime
+
+from robot.utils.google_drive import save_full_questionnaire_to_drive, create_folder, PARENT_FOLDER_ID
 from robot.utils.financial_score_calculator import calculate_final_conclusion, format_conclusion_message
 from robot.utils.question_labels import get_question_label, get_keyboard_for, QUESTION_FLOW, get_multi_choice_keyboard
-
 import re
-
+from robot.models import Patient, BotUser
+from asgiref.sync import sync_to_async
 from aiogram import Router
 from aiogram.filters import StateFilter
 from robot.states import QuestionnaireStates
@@ -17,7 +19,24 @@ from robot.utils.validators import is_pdf, is_allowed_file
 
 router = Router()
 
-regions = ["Ташкент", "Самарканд", "Фергана", "Андижан", "Бухара", "Хорезм", "Навои", "Наманган", "Кашкадарья", "Сурхандарья", "Сырдарья", "Джизак", "Каракалпакстан"]
+REGIONS = [
+    "Андижанская область — Андижан",
+    "Бухарская область — Бухара",
+    "Джизакская область — Джизак",
+    "Кашкадарьинская область — Карши",
+    "Навоийская область — Навоий",
+    "Наманганская область — Наманган",
+    "Самаркандская область — Самарканд",
+    "Сурхандарьинская область — Термез",
+    "Сырдарьинская область — Гулистан",
+    "Ташкентская область — Нурафшан",
+    "Ферганская область — Фергана",
+    "Хорезмская область — Ургенч",
+    "Республика Каракалпакстан — Нукус",
+    "г. Ташкент — Ташкент",
+    "Другое"
+]
+
 
 STATE_ORDER = [
     "ConfirmRules",
@@ -47,8 +66,8 @@ STATE_ORDER = [
     "Q21_FamilyWork",
     "Q22_HousingType",
     "Q22_HousingDoc",
-    "Q23_Contribution",
-    "Q23_ContributionConfirm",
+    # "Q23_Contribution",
+    # "Q23_ContributionConfirm",
     "Q24_AdditionalFile",
     "Q25_FinalComment"
 ]
@@ -87,10 +106,10 @@ def get_previous_state(current_state: str, user_data: dict = None) -> str:
         elif current_state == "Q22_HousingDoc":
             return "Q22_HousingType"
             
-        elif current_state == "Q23_ContributionConfirm":
-            return "Q23_Contribution"
+        # elif current_state == "Q23_ContributionConfirm":
+        #     return "Q23_Contribution"
         elif current_state == "Q24_AdditionalFile":
-            return "Q23_Contribution"
+            return "Q22_HousingType"
         elif current_state == "Q25_FinalComment":
             return "Q24_AdditionalFile"
             
@@ -148,7 +167,7 @@ def clear_current_data(state_name: str, user_data: dict):
         "Q21_FamilyWork": "q21_family_work",
         "Q22_HousingType": "q22_housing_type",
         "Q22_HousingDoc": "q22_housing_doc",
-        "Q23_Contribution": "q23_contribution",
+        # "Q23_Contribution": "q23_contribution",
         "Q24_AdditionalFile": "q24_additional_file",
         "Q25_FinalComment": "q25_final_comment"
     }
@@ -156,6 +175,8 @@ def clear_current_data(state_name: str, user_data: dict):
     data_key = state_to_data_map.get(state_name)
     if data_key and data_key in user_data:
         del user_data[data_key]
+    if state_name == "Q6_Region" and "q6_manual_region" in user_data:
+        del user_data["q6_manual_region"]
 
 
 
@@ -187,6 +208,12 @@ async def navigate_to_state(state_name: str, message: types.Message, state: FSMC
         )
         await message.answer(label, reply_markup=username_button)
         await state.set_state(QuestionnaireStates.Q5_TelegramUsername)
+    
+    elif state_name == "Q6_Region":
+        label = get_question_label("Q6_Region")
+        username_button = get_region_keyboard()
+        await message.answer(label, reply_markup=username_button)
+        await state.set_state(QuestionnaireStates.Q6_Region)
         
     elif state_name == "Q11_DiagnosisText":
         await message.answer(get_question_label("Q11_DiagnosisText"), reply_markup=ReplyKeyboardMarkup(
@@ -253,12 +280,12 @@ async def navigate_to_state(state_name: str, message: types.Message, state: FSMC
         ))
         await state.set_state(QuestionnaireStates.Q22_HousingDoc)
         
-    elif state_name == "Q23_Contribution":
-        await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
-            resize_keyboard=True
-        ))
-        await state.set_state(QuestionnaireStates.Q23_Contribution)
+    # elif state_name == "Q23_Contribution":
+    #     await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardMarkup(
+    #         keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+    #         resize_keyboard=True
+    #     ))
+    #     await state.set_state(QuestionnaireStates.Q23_Contribution)
         
     elif state_name == "Q24_AdditionalFile":
         await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=ReplyKeyboardMarkup(
@@ -293,6 +320,36 @@ def get_back_only_keyboard() -> ReplyKeyboardMarkup:
 
 
 
+def get_region_keyboard():
+    keyboard = []
+    for i in range(0, len(REGIONS), 2):
+        row = [KeyboardButton(text=REGIONS[i])]
+        if i + 1 < len(REGIONS):
+            row.append(KeyboardButton(text=REGIONS[i + 1]))
+        keyboard.append(row)
+
+    keyboard.append([KeyboardButton(text="⬅️ Назад")])
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True
+    )
+
+@router.message(
+    StateFilter(
+        QuestionnaireStates.Q12_DiagnosisFile,
+        QuestionnaireStates.Q17_ConfirmationFile,
+        QuestionnaireStates.Q18_IncomeDoc,
+        QuestionnaireStates.Q22_HousingDoc,
+    ),
+    ~F.content_type.in_({types.ContentType.DOCUMENT, types.ContentType.PHOTO})
+)
+async def invalid_file_input(message: types.Message):
+    await message.answer("❌ Пожалуйста, прикрепите файл как PDF-документ или фото, а не отправляйте текст, аудио или голосовое.")
+
+@router.message(StateFilter(QuestionnaireStates.Q1_FullName, QuestionnaireStates.Q11_DiagnosisText,QuestionnaireStates.Q13_Complaint, QuestionnaireStates.Q25_FinalComment),
+                ~(F.content_type == types.ContentType.TEXT))
+async def invalid_diagnosis_text_input(message: types.Message):
+    await message.answer("❌ Пожалуйста, введите диагноз ТЕКСТОМ, а не отправляйте файл, голосовое или фото.")
 
 async def proceed_with_keyboard(state_name: str, message: types.Message, state: FSMContext):
     label = get_question_label(state_name)
@@ -316,7 +373,10 @@ async def confirm_rules(message: types.Message, state: FSMContext):
     else:
         await message.answer("⚠️ Вы должны подтвердить условия участия для продолжения.")
 
-@router.message(StateFilter(QuestionnaireStates.Q1_FullName))
+@router.message(
+    StateFilter(QuestionnaireStates.Q1_FullName),
+    F.content_type == types.ContentType.TEXT
+)
 async def questionnaire_full_name(message: types.Message, state: FSMContext):
     if message.text == "⬅️ Назад":
         await message.answer("⛔ Вы на первом шаге. Назад невозможно.")
@@ -389,6 +449,10 @@ async def questionnaire_gender(message: types.Message, state: FSMContext):
 @router.message(StateFilter(QuestionnaireStates.Q4_PhoneNumber), F.content_type == types.ContentType.CONTACT)
 async def questionnaire_phone_contact(message: types.Message, state: FSMContext):
     contact = message.contact
+    if contact.user_id != message.from_user.id:
+        await message.answer("❌ Пожалуйста, отправьте СВОЙ номер через кнопку: '📱 Отправить номер'.")
+        return
+
     await state.update_data(q4_phone_number=contact.phone_number)
 
     label = get_question_label("Q5_TelegramUsername")
@@ -423,22 +487,48 @@ async def questionnaire_username(message: types.Message, state: FSMContext):
         await state.update_data(q5_telegram_username=username)
 
     label = get_question_label("Q6_Region")
-    keyboard = get_keyboard_for("Q6_Region")
-    await message.answer(label, reply_markup=keyboard)
+    await message.answer(label, reply_markup=get_region_keyboard())
     await state.set_state(QuestionnaireStates.Q6_Region)
 
 
 @router.message(StateFilter(QuestionnaireStates.Q6_Region))
 async def questionnaire_region(message: types.Message, state: FSMContext):
-    if message.text not in regions:
-        await message.answer("❌ Пожалуйста, выберите один из предложенных регионов.")
+    region_input = message.text.strip()
+    data = await state.get_data()
+
+    # Шаг 1: если ожидаем ручной ввод после "Другое"
+    if data.get("q6_manual_region"):
+        await state.update_data(q6_region=region_input)
+        await state.update_data(q6_manual_region=False)  # сброс флага
+        await message.answer("✅ Регион сохранён.", reply_markup=ReplyKeyboardRemove())
+        label = get_question_label("Q7_WhoApplies")
+        keyboard = get_keyboard_for("Q7_WhoApplies")
+        await message.answer(label, reply_markup=keyboard)
+        await state.set_state(QuestionnaireStates.Q7_WhoApplies)
         return
 
-    await state.update_data(q6_region=message.text)
+    # Шаг 2: пользователь нажал "Другое"
+    if region_input == "Другое":
+        await state.update_data(q6_manual_region=True)  # включаем флаг ручного ввода
+        await message.answer(
+            "✏️ Пожалуйста, введите регион и город вручную (например: 'Хатирчинский район, Навоий').",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return
+
+    # Шаг 3: проверка на валидный регион
+    if region_input not in REGIONS:
+        await message.answer("❌ Пожалуйста, выберите вариант из списка или нажмите «Другое» для ручного ввода.")
+        return
+
+    # Шаг 4: пользователь выбрал из предложенного списка
+    await state.update_data(q6_region=region_input)
+    await message.answer("✅ Регион сохранён.", reply_markup=ReplyKeyboardRemove())
     label = get_question_label("Q7_WhoApplies")
     keyboard = get_keyboard_for("Q7_WhoApplies")
     await message.answer(label, reply_markup=keyboard)
     await state.set_state(QuestionnaireStates.Q7_WhoApplies)
+
 
 
 @router.message(StateFilter(QuestionnaireStates.Q7_WhoApplies))
@@ -512,12 +602,17 @@ async def questionnaire_has_diagnosis(message: types.Message, state: FSMContext)
         await message.answer(get_question_label("Q13_Complaint"))
         await state.set_state(QuestionnaireStates.Q13_Complaint)
 
-@router.message(StateFilter(QuestionnaireStates.Q11_DiagnosisText))
+@router.message(StateFilter(QuestionnaireStates.Q11_DiagnosisText), F.content_type == types.ContentType.TEXT)
 async def questionnaire_diagnosis_text(message: types.Message, state: FSMContext):
-    await state.update_data(q11_diagnosis_text=message.text)
+    await state.update_data(q11_diagnosis_text=message.text.strip())
 
     await message.answer(get_question_label("Q12_DiagnosisFile"), reply_markup=get_back_only_keyboard())
     await state.set_state(QuestionnaireStates.Q12_DiagnosisFile)
+
+
+@router.message(StateFilter(QuestionnaireStates.Q11_DiagnosisText))
+async def invalid_diagnosis_text_input(message: types.Message):
+    await message.answer("❌ Пожалуйста, введите диагноз ТЕКСТОМ, а не отправляйте голосовое или файл.")
 
 @router.message(F.content_type.in_({types.ContentType.DOCUMENT, types.ContentType.PHOTO}), StateFilter(QuestionnaireStates.Q12_DiagnosisFile))
 async def questionnaire_diagnosis_file(message: types.Message, state: FSMContext):
@@ -532,7 +627,7 @@ async def questionnaire_diagnosis_file(message: types.Message, state: FSMContext
     await state.set_state(QuestionnaireStates.Q13_Complaint)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q13_Complaint))
+@router.message(StateFilter(QuestionnaireStates.Q13_Complaint), F.content_type == types.ContentType.TEXT)
 async def questionnaire_complaint(message: types.Message, state: FSMContext):
     await state.update_data(q13_complaint=message.text)
 
@@ -823,50 +918,52 @@ async def questionnaire_housing_doc(message: types.Message, state: FSMContext):
     await proceed_to_q23(message, state)
 
 async def proceed_to_q23(message: types.Message, state: FSMContext):
-    await message.answer(get_question_label("Q23_Contribution"), reply_markup=get_back_only_keyboard())
-    await state.set_state(QuestionnaireStates.Q23_Contribution)
+    await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=get_back_only_keyboard())
+    await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
+    # await message.answer(get_question_label("Q23_Contribution"), reply_markup=get_back_only_keyboard())
+    # await state.set_state(QuestionnaireStates.Q23_Contribution)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q23_Contribution))
-async def questionnaire_contribution(message: types.Message, state: FSMContext):
-    raw = message.text.strip().replace(" ", "")
-    if not raw.isdigit():
-        await message.answer("❌ Введите только сумму в числовом формате, без текста.")
-        return
+# @router.message(StateFilter(QuestionnaireStates.Q23_Contribution))
+# async def questionnaire_contribution(message: types.Message, state: FSMContext):
+#     raw = message.text.strip().replace(" ", "")
+#     if not raw.isdigit():
+#         await message.answer("❌ Введите только сумму в числовом формате, без текста.")
+#         return
 
-    amount = int(raw)
-    await state.update_data(q23_contribution=amount)
+#     amount = int(raw)
+#     await state.update_data(q23_contribution=amount)
 
-    flow = QUESTION_FLOW["Q23_Contribution"]
-    formatted = f"{amount:,}".replace(",", " ")
+#     flow = QUESTION_FLOW["Q23_Contribution"]
+#     formatted = f"{amount:,}".replace(",", " ")
 
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=btn)] for btn in flow["confirm_buttons"]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
+#     kb = ReplyKeyboardMarkup(
+#         keyboard=[[KeyboardButton(text=btn)] for btn in flow["confirm_buttons"]],
+#         resize_keyboard=True,
+#         one_time_keyboard=True
+#     )
 
-    text = flow["confirm_template"].format(amount=formatted)
-    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+#     text = flow["confirm_template"].format(amount=formatted)
+#     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-    await state.set_state(QuestionnaireStates.Q23_ContributionConfirm)
+#     await state.set_state(QuestionnaireStates.Q23_ContributionConfirm)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q23_ContributionConfirm))
-async def questionnaire_contribution_confirm(message: types.Message, state: FSMContext):
-    flow = QUESTION_FLOW["Q23_Contribution"]
-    confirm, retry = flow["confirm_buttons"]
+# @router.message(StateFilter(QuestionnaireStates.Q23_ContributionConfirm))
+# async def questionnaire_contribution_confirm(message: types.Message, state: FSMContext):
+#     flow = QUESTION_FLOW["Q23_Contribution"]
+#     confirm, retry = flow["confirm_buttons"]
 
-    if message.text == confirm:
-        await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=get_back_only_keyboard())
-        await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
+#     if message.text == confirm:
+#         await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=get_back_only_keyboard())
+#         await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
 
-    elif message.text == retry:
-        await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardRemove())
-        await state.set_state(QuestionnaireStates.Q23_Contribution)
+#     elif message.text == retry:
+#         await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardRemove())
+#         await state.set_state(QuestionnaireStates.Q23_Contribution)
 
-    else:
-        await message.answer("❗ Пожалуйста, выберите один из предложенных вариантов.")
+#     else:
+#         await message.answer("❗ Пожалуйста, выберите один из предложенных вариантов.")
 
 
 
@@ -891,21 +988,55 @@ async def skip_additional_file(message: types.Message, state: FSMContext):
     await proceed_with_keyboard("Q25_FinalComment", message, state)
 
 
-@router.message(StateFilter(QuestionnaireStates.Q25_FinalComment))
+@router.message(StateFilter(QuestionnaireStates.Q25_FinalComment),  F.content_type == types.ContentType.TEXT)
 async def questionnaire_final_comment(message: Message, state: FSMContext):
     await state.update_data(q25_final_comment=message.text)
     data = await state.get_data()
 
+    full_name = data.get("q1_full_name")
+    phone_number = data.get("q4_phone_number")
+    birth_date_str = data.get("q2_birth_date")
+    birth_date = datetime.strptime(birth_date_str, "%d.%m.%Y").date()
+
+    telegram_id = message.from_user.id
+    bot_user = await sync_to_async(BotUser.objects.get)(telegram_id=telegram_id)
+
+    existing_patient_qs = Patient.objects.filter(
+        full_name=full_name,
+        phone_number=phone_number,
+        birth_date=birth_date
+    )
+
+    patient = await sync_to_async(existing_patient_qs.first)()
+    folder_id = patient.folder_id if patient else None
+
+    if not folder_id:
+        # Если нет папки — создаём новую
+        folder_id = create_folder(f"Анкета пациента – {full_name}", parent_id=PARENT_FOLDER_ID)
+
+        if not patient:
+            patient = await sync_to_async(Patient.objects.create)(
+                bot_user=bot_user,
+                full_name=full_name,
+                phone_number=phone_number,
+                birth_date=birth_date,
+                folder_id=folder_id
+            )
+        else:
+            patient.folder_id = folder_id
+            await sync_to_async(patient.save)()
+    else:
+        # 🟡 Папка уже существует для этого пациента
+        await message.answer("📁 Анкета уже была сохранена ранее для этого пациента. Старая папка будет использована повторно.")
     await message.answer("📂 Сохраняем данные анкеты...")
 
     try:
-        await save_full_questionnaire_to_drive(data, message.bot)
+        await save_full_questionnaire_to_drive(data, message.bot, folder_id=folder_id)
         await message.answer("✅ Анкета успешно сохранена.")
     except Exception as e:
         await message.answer("⚠️ Ошибка при сохранении данных.")
         print(f"Error saving to Google Drive: {e}")
 
-    # Подведение итогов
     summary = (
         "✅ <b>Анкета завершена!</b>\n\n"
         f"👤 <b>ФИО:</b> {data.get('q1_full_name')}\n"
@@ -915,7 +1046,6 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
         f"📲 <b>Telegram:</b> {data.get('q5_telegram_username')}\n"
         f"👨‍👩‍👧‍👦 <b>Кто работает в семье:</b> {data.get('q21_family_work')}\n"
         f"🏠 <b>Тип жилья:</b> {data.get('q22_housing_type')}\n"
-        f"💰 <b>Взнос:</b> {data.get('q23_contribution')} сум\n"
         f"📄 <b>Комментарий:</b> {data.get('q25_final_comment')}\n"
     )
     conclusion = calculate_final_conclusion(data)

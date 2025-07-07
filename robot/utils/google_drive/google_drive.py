@@ -5,6 +5,7 @@ from google.oauth2.service_account import Credentials as ServiceAccountCredentia
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from aiogram import Bot
+from googleapiclient.errors import HttpError
 
 load_dotenv(dotenv_path=".env", override=True)
 
@@ -33,7 +34,7 @@ QUESTION_LABELS = {
     "q19_children_count": "Сколько детей в семье?",
     "q21_family_work": "Кто работает в семье?",
     "q22_housing_type": "Какое у вас жильё?",
-    "q23_contribution": "Какую сумму вы готовы внести?",
+    # "q23_contribution": "Какую сумму вы готовы внести?",
     "q25_final_comment": "Комментарий к заявке",
 
     # Файлы
@@ -42,7 +43,7 @@ QUESTION_LABELS = {
     "q18_income_doc": "📎 Справка о доходах (файл)",
     "q19_children_docs": "📎 Документы на детей (файлы)",
     "q22_housing_doc": "📎 Документ на жильё (файл)",
-    "q24_additional_file": "📎 Дополнительный файл", #исправить
+    "q24_additional_file": "📎 Дополнительный файл",
 }
 
 QUESTION_FILE_KEYS = {
@@ -112,11 +113,11 @@ async def save_file_by_id(file_id: str, folder_id: str, filename: str, bot: Bot)
         print(f"Error saving file {file_id}: {e}")
         raise
 
-async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot):
+async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot, folder_id: str):
     try:
         full_name = user_data.get('q1_full_name', 'Пациент')
-        root_folder_name = f"Анкета пациента – {full_name}"
-        root_folder_id = create_folder(root_folder_name, parent_id=PARENT_FOLDER_ID)
+        # root_folder_name = f"Анкета пациента – {full_name}"
+        root_folder_id = folder_id 
         
         
         text_parts = []
@@ -159,3 +160,15 @@ async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot):
     except Exception as e:
         print(f"❌ Error in save_full_questionnaire_to_drive: {e}")
         raise
+
+
+
+def delete_folder(folder_id: str):
+    try:
+        service = get_drive_service()
+        service.files().delete(fileId=folder_id).execute()
+        print(f"✅ Папка с ID {folder_id} успешно удалена.")
+        return True
+    except HttpError as e:
+        print(f"❌ Ошибка при удалении папки: {e}")
+        return False
