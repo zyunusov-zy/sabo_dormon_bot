@@ -1,8 +1,10 @@
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from asgiref.sync import sync_to_async
 
 from robot.states import RegisterStates, QuestionnaireStates
+from robot.models import BotUser
 
 router = Router()
 
@@ -39,6 +41,19 @@ async def get_phone_number_and_confirm_rules(message: types.Message, state: FSMC
     contact = message.contact
     await state.update_data(phone_number=contact.phone_number)
 
+
+    user_data = await state.get_data()
+    full_name = user_data.get("full_name")
+    phone_number = contact.phone_number
+    telegram_id = message.from_user.id
+
+    await sync_to_async(BotUser.objects.update_or_create)(
+        telegram_id=telegram_id,
+        defaults={
+            "full_name": full_name,
+            "phone_number": phone_number
+        }
+    )
     await message.answer(
         "✅ Спасибо!\n\n"
         "✅ Подтвердите честность предоставляемых вами данных:\n"
