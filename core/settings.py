@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.1/ref/settings/
 
 from pathlib import Path
 from environs import Env
+from drf_yasg import openapi
 
 env = Env()
 env.read_env()
@@ -31,25 +32,36 @@ DEBUG = True#env.bool('DEBUG', False)
 
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS')
 
+AUTH_USER_MODEL = 'robot.CustomUser'
+
 
 # Application definition
 
 INSTALLED_APPS = [
     'jazzmin',
     
-    
+    'core',
+    'robot.apps.RobotConfig',
+    'drf_yasg',
+    'corsheaders',
+    'rest_framework', 
+    'rest_framework.authtoken',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    
-    
-    'robot.apps.RobotConfig',
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
+
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -58,6 +70,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+CORS_ALLOW_ALL_ORIGINS = True 
 
 ROOT_URLCONF = 'core.urls'
 
@@ -136,6 +150,19 @@ BOT_TOKEN = env.str('BOT_TOKEN')
 
 ADMINS_LIST = env.list('ADMINS_LIST')
 
+from drf_yasg import openapi
+
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'Введите JWT токен в формате: Bearer <ваш токен>',
+        }
+    },
+    'USE_SESSION_AUTH': False,
+}
 
 # Custom Admin Settings
 JAZZMIN_SETTINGS = {

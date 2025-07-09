@@ -1011,8 +1011,8 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
     folder_id = patient.folder_id if patient else None
 
     if not folder_id:
-        # Если нет папки — создаём новую
         folder_id = create_folder(f"Анкета пациента – {full_name}", parent_id=PARENT_FOLDER_ID)
+        drive_folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
 
         if not patient:
             patient = await sync_to_async(Patient.objects.create)(
@@ -1020,13 +1020,14 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
                 full_name=full_name,
                 phone_number=phone_number,
                 birth_date=birth_date,
-                folder_id=folder_id
+                folder_id=folder_id,
+                drive_folder_url=drive_folder_url
             )
         else:
             patient.folder_id = folder_id
+            patient.drive_folder_url = drive_folder_url
             await sync_to_async(patient.save)()
     else:
-        # 🟡 Папка уже существует для этого пациента
         await message.answer("📁 Анкета уже была сохранена ранее для этого пациента. Старая папка будет использована повторно.")
     await message.answer("📂 Сохраняем данные анкеты...")
 
