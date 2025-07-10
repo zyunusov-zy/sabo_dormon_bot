@@ -16,6 +16,9 @@ const StatusBadge = ({ status }) => {
   console.log(status);
   const map = {
     approved: { text: "Одобрено", className: "bg-green-100 text-green-800" },
+    approved_by_doctor: { text: "Одобрено", className: "bg-green-100 text-green-800" },
+    approved_by_accountant: { text: "Одобрено", className: "bg-green-100 text-green-800" },
+    fully_approved: { text: "Одобрено", className: "bg-green-100 text-green-800" },
     rejected: { text: "Отклонено", className: "bg-red-100 text-red-800" },
     waiting: { text: "Ожидание", className: "bg-yellow-100 text-yellow-800" },
   };
@@ -31,7 +34,7 @@ const ActionButtons = ({
   patient,
   onApprove,
   onReject,
-  userRole = "doctor",
+  userRole,
 }) => {
   const isDoctorRole = userRole === "doctor";
   const isAccountantRole = userRole === "accountant";
@@ -213,73 +216,81 @@ export default function Dashboard() {
     fetchPatients();
   }, []);
 
-  const handleApprove = async (patientId, role) => {
-    try {
-      // Here you would make API call to approve
-      // await axios.patch(`http://127.0.0.1:8000/api/patients/${patientId}/approve/`, { role });
+const handleApprove = async (patientId, role) => {
+  try {
+    const comment = "";
 
-      // Update local state
-      setPatients((prev) =>
-        prev.map((p) => {
-          if (p.id === patientId) {
-            const updated = { ...p };
-            if (role === "doctor") {
-              updated.approved_by_doctor = true;
-            } else if (role === "accountant") {
-              updated.approved_by_accountant = true;
-            }
+    await axiosInstance.post(`/api/patients/${patientId}/approve/`, {
+      comment,
+    });
 
-            // Update overall status
-            if (updated.approved_by_doctor && updated.approved_by_accountant) {
-              updated.is_fully_approved = true;
-              updated.status = "approved";
-            }
-            return updated;
+    setPatients((prev) =>
+      prev.map((p) => {
+        if (p.id === patientId) {
+          const updated = { ...p };
+          if (role === "doctor") {
+            updated.approved_by_doctor = true;
+            updated.doctor_comment = comment;
+          } else if (role === "accountant") {
+            updated.approved_by_accountant = true;
+            updated.accountant_comment = comment;
           }
-          return p;
-        })
-      );
-    } catch (error) {
-      console.error("Ошибка при одобрении:", error);
-    }
-  };
 
-  const handleReject = async (patientId, role) => {
-    try {
-      // Here you would make API call to reject
-      // await axios.patch(`http://127.0.0.1:8000/api/patients/${patientId}/reject/`, { role });
-
-      // Update local state
-      setPatients((prev) =>
-        prev.map((p) => {
-          if (p.id === patientId) {
-            const updated = { ...p };
-            if (role === "doctor") {
-              updated.rejected_by_doctor = true;
-            } else if (role === "accountant") {
-              updated.rejected_by_accountant = true;
-            }
-
-            // Update overall status
-            updated.is_rejected = true;
-            updated.status = "rejected";
-
-            return updated;
+          if (updated.approved_by_doctor && updated.approved_by_accountant) {
+            updated.is_fully_approved = true;
+            updated.status = "approved";
           }
-          return p;
-        })
-      );
-    } catch (error) {
-      console.error("Ошибка при отклонении:", error);
-    }
-  };
+
+          return updated;
+        }
+        return p;
+      })
+    );
+  } catch (error) {
+    console.error("Ошибка при одобрении:", error);
+  }
+};
+
+const handleReject = async (patientId, role) => {
+  try {
+    const comment = "";
+
+    await axiosInstance.post(`/api/patients/${patientId}/reject/`, {
+      comment,
+    });
+
+    setPatients((prev) =>
+      prev.map((p) => {
+        if (p.id === patientId) {
+          const updated = { ...p };
+          if (role === "doctor") {
+            updated.rejected_by_doctor = true;
+            updated.doctor_comment = comment;
+          } else if (role === "accountant") {
+            updated.rejected_by_accountant = true;
+            updated.accountant_comment = comment;
+          }
+
+          updated.is_rejected = true;
+          updated.status = "rejected";
+
+          return updated;
+        }
+        return p;
+      })
+    );
+  } catch (error) {
+    console.error("Ошибка при отклонении:", error);
+  }
+};
+
 
   const filtered = patients.filter((p) => {
     const matchesStatus =
       statusFilter === "Все" ||
-      (statusFilter === "Одобрено" && p.status === "approved") ||
+      (statusFilter === "Одобрено" && p.status === "fully_approved") ||
       (statusFilter === "Отклонено" && p.status === "rejected") ||
-      (statusFilter === "Ожидание" && p.status === "waiting");
+      (statusFilter === "Ожидание" && (p.status === "waiting" || p.status === "approved_by_doctor" || p.status === "approved_by_accountant"));
     const matchesSearch = p.full_name
       .toLowerCase()
       .includes(search.toLowerCase());
