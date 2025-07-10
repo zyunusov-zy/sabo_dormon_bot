@@ -1,5 +1,5 @@
-// src/utils/axiosInstance.js
 import axios from 'axios';
+import getCookie from './token';
 
 const baseURL = 'http://localhost:8000';
 
@@ -8,12 +8,13 @@ const axiosInstance = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,
 });
 
-// Request interceptor: attach access token
+// Request interceptor: attach access token from cookie
 axiosInstance.interceptors.request.use(
   async (config) => {
-    const token = localStorage.getItem('access');
+    const token = getCookie('access');
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
@@ -22,7 +23,6 @@ axiosInstance.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor: try refresh token on 401
 axiosInstance.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -30,20 +30,22 @@ axiosInstance.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
-        const refresh = localStorage.getItem('refresh');
-        const res = await axios.post(`${baseURL}/api/token/refresh/`, {
-          refresh,
-        });
+        const refresh = getCookie('refresh'); // ✅ читаем из cookie
+        const res = await axios.post(
+          `${baseURL}/api/token/refresh/`,
+          { refresh },
+          { withCredentials: true }
+        );
 
-        localStorage.setItem('access', res.data.access);
-        axiosInstance.defaults.headers['Authorization'] = `Bearer ${res.data.access}`;
+        document.cookie = `access=${res.data.access}; path=/`;
+
         originalRequest.headers['Authorization'] = `Bearer ${res.data.access}`;
 
         return axiosInstance(originalRequest);
       } catch (err) {
         console.error('Refresh failed:', err);
-        localStorage.removeItem('access');
-        localStorage.removeItem('refresh');
+        document.cookie = 'access=; Max-Age=0';
+        document.cookie = 'refresh=; Max-Age=0';
         window.location.href = '/login';
       }
     }

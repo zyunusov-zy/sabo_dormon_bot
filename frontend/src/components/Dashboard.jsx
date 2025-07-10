@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,37 +9,48 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-
-const mockData = [
-  { id: 1, name: "Иван Петров", date: "2025-07-01", status: "Approved" },
-  { id: 2, name: "Мария Сидорова", date: "2025-07-02", status: "Rejected" },
-  { id: 3, name: "Алексей Козлов", date: "2025-07-03", status: "Pending" },
-];
+import axiosInstance from "@/utils/axiosInstance";
+import getRoleFromAccessToken from "../utils/getRoleJWT";
 
 const StatusBadge = ({ status }) => {
-  const statusText = {
-    Approved: "Одобрено",
-    Rejected: "Отклонено",
-    Pending: "Ожидание",
-  }[status];
+  console.log(status);
+  const map = {
+    approved: { text: "Одобрено", className: "bg-green-100 text-green-800" },
+    rejected: { text: "Отклонено", className: "bg-red-100 text-red-800" },
+    waiting: { text: "Ожидание", className: "bg-yellow-100 text-yellow-800" },
+  };
 
-  const color = {
-    Approved: "bg-green-100 text-green-800",
-    Rejected: "bg-red-100 text-red-800",
-    Pending: "bg-yellow-100 text-yellow-800",
-  }[status];
-
-  return <Badge className={color}>{statusText}</Badge>;
+  const s = map[status] || {
+    text: status,
+    className: "bg-gray-100 text-gray-800",
+  };
+  return <Badge className={s.className}>{s.text}</Badge>;
 };
 
-const ActionButtons = ({ patient, onApprove, onReject }) => {
-  if (patient.status !== "Pending") return null;
+const ActionButtons = ({
+  patient,
+  onApprove,
+  onReject,
+  userRole = "doctor",
+}) => {
+  const isDoctorRole = userRole === "doctor";
+  const isAccountantRole = userRole === "accountant";
+
+  // Determine if buttons should be shown
+  const showDoctorButtons =
+    isDoctorRole && !patient.approved_by_doctor && !patient.rejected_by_doctor;
+  const showAccountantButtons =
+    isAccountantRole &&
+    !patient.approved_by_accountant &&
+    !patient.rejected_by_accountant;
+
+  if (!showDoctorButtons && !showAccountantButtons) return null;
 
   return (
     <div className="flex gap-2">
       <Button
         size="sm"
-        onClick={() => onApprove(patient.id)}
+        onClick={() => onApprove(patient.id, userRole)}
         className="bg-green-500 hover:bg-green-600 text-white"
       >
         Одобрить
@@ -47,7 +58,7 @@ const ActionButtons = ({ patient, onApprove, onReject }) => {
       <Button
         size="sm"
         variant="outline"
-        onClick={() => onReject(patient.id)}
+        onClick={() => onReject(patient.id, userRole)}
         className="border-red-500 text-red-500 hover:bg-red-50"
       >
         Отклонить
@@ -56,12 +67,45 @@ const ActionButtons = ({ patient, onApprove, onReject }) => {
   );
 };
 
-const isLate = (dateStr, status) => {
-  if (status !== "Pending") return false;
+const ApprovalStatus = ({ patient }) => {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">Врач:</span>
+        {patient.approved_by_doctor ? (
+          <Badge className="bg-green-100 text-green-800">Одобрено</Badge>
+        ) : patient.rejected_by_doctor ? (
+          <Badge className="bg-red-100 text-red-800">Отклонено</Badge>
+        ) : (
+          <Badge className="bg-yellow-100 text-yellow-800">Ожидание</Badge>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">Бухгалтер:</span>
+        {patient.approved_by_accountant ? (
+          <Badge className="bg-green-100 text-green-800">Одобрено</Badge>
+        ) : patient.rejected_by_accountant ? (
+          <Badge className="bg-red-100 text-red-800">Отклонено</Badge>
+        ) : (
+          <Badge className="bg-yellow-100 text-yellow-800">Ожидание</Badge>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const checkLateness = (dateStr, status) => {
+  if (status === "approved" || status === "rejected")
+    return { late: false, days: 0 };
+
   const now = new Date();
+  now.setDate(now.getDate() + 4);
   const date = new Date(dateStr);
-  const diffDays = (now - date) / (1000 * 60 * 60 * 24);
-  return diffDays > 3;
+
+  const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+  const late = diffDays > 3;
+
+  return { late, days: diffDays };
 };
 
 // SVG Icons
@@ -149,35 +193,106 @@ export default function Dashboard() {
   const [statusFilter, setStatusFilter] = useState("Все");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState("table");
-  const [patients, setPatients] = useState(mockData);
+  const [patients, setPatients] = useState([]);
+  const [userRole, setUserRole] = useState("");
 
-  const handleApprove = (patientId) => {
-    setPatients((prev) =>
-      prev.map((p) => (p.id === patientId ? { ...p, status: "Approved" } : p))
-    );
+  useEffect(() => {
+    const role = getRoleFromAccessToken();
+    if (role) {
+      setUserRole(role);
+    }
+    const fetchPatients = async () => {
+      try {
+        const response = await axiosInstance.get("/api/patients/");
+        setPatients(response.data);
+      } catch (error) {
+        console.error("Ошибка при загрузке пациентов:", error);
+      }
+    };
+
+    fetchPatients();
+  }, []);
+
+  const handleApprove = async (patientId, role) => {
+    try {
+      // Here you would make API call to approve
+      // await axios.patch(`http://127.0.0.1:8000/api/patients/${patientId}/approve/`, { role });
+
+      // Update local state
+      setPatients((prev) =>
+        prev.map((p) => {
+          if (p.id === patientId) {
+            const updated = { ...p };
+            if (role === "doctor") {
+              updated.approved_by_doctor = true;
+            } else if (role === "accountant") {
+              updated.approved_by_accountant = true;
+            }
+
+            // Update overall status
+            if (updated.approved_by_doctor && updated.approved_by_accountant) {
+              updated.is_fully_approved = true;
+              updated.status = "approved";
+            }
+            return updated;
+          }
+          return p;
+        })
+      );
+    } catch (error) {
+      console.error("Ошибка при одобрении:", error);
+    }
   };
 
-  const handleReject = (patientId) => {
-    setPatients((prev) =>
-      prev.map((p) => (p.id === patientId ? { ...p, status: "Rejected" } : p))
-    );
+  const handleReject = async (patientId, role) => {
+    try {
+      // Here you would make API call to reject
+      // await axios.patch(`http://127.0.0.1:8000/api/patients/${patientId}/reject/`, { role });
+
+      // Update local state
+      setPatients((prev) =>
+        prev.map((p) => {
+          if (p.id === patientId) {
+            const updated = { ...p };
+            if (role === "doctor") {
+              updated.rejected_by_doctor = true;
+            } else if (role === "accountant") {
+              updated.rejected_by_accountant = true;
+            }
+
+            // Update overall status
+            updated.is_rejected = true;
+            updated.status = "rejected";
+
+            return updated;
+          }
+          return p;
+        })
+      );
+    } catch (error) {
+      console.error("Ошибка при отклонении:", error);
+    }
   };
 
   const filtered = patients.filter((p) => {
     const matchesStatus =
       statusFilter === "Все" ||
-      (statusFilter === "Одобрено" && p.status === "Approved") ||
-      (statusFilter === "Отклонено" && p.status === "Rejected") ||
-      (statusFilter === "Ожидание" && p.status === "Pending");
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
+      (statusFilter === "Одобрено" && p.status === "approved") ||
+      (statusFilter === "Отклонено" && p.status === "rejected") ||
+      (statusFilter === "Ожидание" && p.status === "waiting");
+    const matchesSearch = p.full_name
+      .toLowerCase()
+      .includes(search.toLowerCase());
     return matchesStatus && matchesSearch;
   });
 
   const total = patients.length;
-  const approved = patients.filter((p) => p.status === "Approved").length;
-  const rejected = patients.filter((p) => p.status === "Rejected").length;
-  const pending = patients.filter((p) => p.status === "Pending").length;
-  const late = patients.filter((p) => isLate(p.date, p.status)).length;
+  const approved = patients.filter((p) => p.status === "approved").length;
+  const rejected = patients.filter((p) => p.status === "rejected").length;
+  const pending = patients.filter((p) => p.status === "pending").length;
+  const late = patients.filter(
+    (p) => checkLateness(p.created_at, p.status).late
+  ).length;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
@@ -190,6 +305,28 @@ export default function Dashboard() {
           <p className="text-gray-600">
             Управление и отслеживание заявок пациентов
           </p>
+        </div>
+
+        {/* Role Selector */}
+        <div className="flex justify-center gap-4">
+          <Button
+            variant={userRole === "doctor" ? "default" : "outline"}
+            onClick={() => setUserRole("doctor")}
+            className={
+              userRole === "doctor" ? "bg-blue-500 hover:bg-blue-600" : ""
+            }
+          >
+            Врач
+          </Button>
+          <Button
+            variant={userRole === "accountant" ? "default" : "outline"}
+            onClick={() => setUserRole("accountant")}
+            className={
+              userRole === "accountant" ? "bg-blue-500 hover:bg-blue-600" : ""
+            }
+          >
+            Бухгалтер
+          </Button>
         </div>
 
         {/* Statistics Cards */}
@@ -268,7 +405,7 @@ export default function Dashboard() {
 
         {/* Filters and Controls */}
         <Card className="bg-white shadow-lg border-0">
-          <CardContent className="p-1">
+          <CardContent className="p-4">
             <div className="flex flex-wrap gap-4 items-center justify-between">
               <div className="flex gap-4 items-center">
                 <Input
@@ -330,20 +467,41 @@ export default function Dashboard() {
         {/* Data View */}
         {viewMode === "table" ? (
           <Card className="bg-white shadow-lg border-0">
-            <div className="overflow-hidden">
+            <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-4 text-left font-semibold text-gray-700">
-                      Имя
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      ID Пациента
                     </th>
-                    <th className="px-6 py-4 text-left font-semibold text-gray-700">
-                      Дата заявки
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      ФИО
                     </th>
-                    <th className="px-6 py-4 text-left font-semibold text-gray-700">
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      Телефон
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      Дата рождения
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      Дата создания
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      Одобрения
+                    </th>
+                    {/* <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      Комментарии
+                    </th> */}
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      Google Drive
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
                       Статус
                     </th>
-                    <th className="px-6 py-4 text-left font-semibold text-gray-700">
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
+                      Просрочка
+                    </th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">
                       Действия
                     </th>
                   </tr>
@@ -354,25 +512,70 @@ export default function Dashboard() {
                       key={p.id}
                       className="hover:bg-gray-50 transition-colors"
                     >
-                      <td className="px-6 py-4 font-medium text-gray-900">
-                        {p.name}
+                      <td className="px-4 py-3 font-medium text-gray-900">
+                        {p.patient_id}
                       </td>
-                      <td className="px-6 py-4 text-gray-600">{p.date}</td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <StatusBadge status={p.status} />
-                          {isLate(p.date, p.status) && (
-                            <span className="text-orange-500 font-medium">
-                              ⚠️ Просрочено
+                      <td className="px-4 py-3 font-medium text-gray-900">
+                        {p.full_name}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {p.phone_number}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {p.birth_date}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {new Date(p.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3">
+                        <ApprovalStatus patient={p} />
+                      </td>
+                      {/* <td className="px-4 py-3 text-gray-600 max-w-xs">
+                        {p.doctor_comment && (
+                          <div className="mb-1">
+                            <span className="font-medium text-xs">Врач:</span>
+                            <p className="text-xs">{p.doctor_comment}</p>
+                          </div>
+                        )}
+                        {p.accountant_comment && (
+                          <div>
+                            <span className="font-medium text-xs">
+                              Бухгалтер:
                             </span>
-                          )}
-                        </div>
+                            <p className="text-xs">{p.accountant_comment}</p>
+                          </div>
+                        )}
+                      </td> */}
+                      <td className="px-4 py-3 text-blue-600 underline">
+                        <a
+                          href={p.drive_folder_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Папка
+                        </a>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
+                        <StatusBadge status={p.status} />
+                      </td>
+                      <td className="px-4 py-3">
+  {(() => {
+    const { late, days } = checkLateness(p.created_at, p.status);
+    return late ? (
+      <span className="text-orange-500 font-semibold text-sm">
+        ⚠️ {days - 3} дн.
+      </span>
+    ) : (
+      <span className="text-green-600 text-sm">Нет</span>
+    );
+  })()}
+</td>
+                      <td className="px-4 py-3">
                         <ActionButtons
                           patient={p}
                           onApprove={handleApprove}
                           onReject={handleReject}
+                          userRole={userRole}
                         />
                       </td>
                     </tr>
@@ -390,24 +593,94 @@ export default function Dashboard() {
               >
                 <CardContent className="p-6 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xl font-bold text-gray-800">
-                      {p.name}
+                    <h3 className="text-lg font-bold text-gray-800">
+                      {p.full_name}
                     </h3>
-                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                    <span className="text-sm text-gray-500 font-mono">
+                      {p.patient_id}
+                    </span>
                   </div>
-                  <p className="text-gray-600 font-medium">{p.date}</p>
+
+                  <div className="space-y-2 text-sm">
+                    <p className="text-gray-600">
+                      <span className="font-medium">Телефон:</span>{" "}
+                      {p.phone_number}
+                    </p>
+                    <p className="text-gray-600">
+                      <span className="font-medium">Дата рождения:</span>{" "}
+                      {p.birth_date}
+                    </p>
+                    <p className="text-gray-600">
+                      <span className="font-medium">Дата создания:</span>{" "}
+                      {new Date(p.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+
+                  <ApprovalStatus patient={p} />
+
+                  {(p.doctor_comment || p.accountant_comment) && (
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <h4 className="font-medium text-sm mb-2">Комментарии:</h4>
+                      {p.doctor_comment && (
+                        <div className="mb-2">
+                          <span className="font-medium text-xs">Врач:</span>
+                          <p className="text-xs text-gray-600">
+                            {p.doctor_comment}
+                          </p>
+                        </div>
+                      )}
+                      {p.accountant_comment && (
+                        <div>
+                          <span className="font-medium text-xs">
+                            Бухгалтер:
+                          </span>
+                          <p className="text-xs text-gray-600">
+                            {p.accountant_comment}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <a
+                    href={p.drive_folder_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 underline text-sm inline-block"
+                  >
+                    Папка Google Drive
+                  </a>
+
                   <div className="flex items-center justify-between">
                     <StatusBadge status={p.status} />
-                    {isLate(p.date, p.status) && (
-                      <span className="text-orange-500 font-medium text-sm">
-                        ⚠️ Просрочено
-                      </span>
-                    )}
+                    {(() => {
+                      const { late, days } = checkLateness(
+                        p.created_at,
+                        p.status
+                      );
+                      if (late) {
+                        return (
+                          <span className="text-orange-500 font-medium text-sm">
+                            ⚠️ Просрочено — {days - 3} дн. назад
+                          </span>
+                        );
+                      } else if (p.status === "pending") {
+                        const remaining = 3 - days;
+                        return (
+                          <span className="text-yellow-600 font-medium text-sm">
+                            ⏳ Осталось {remaining} дн.
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
+
                   <ActionButtons
                     patient={p}
                     onApprove={handleApprove}
                     onReject={handleReject}
+                    userRole={userRole}
                   />
                 </CardContent>
               </Card>

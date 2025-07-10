@@ -13,7 +13,7 @@ class BotUser(models.Model):
 
 class CustomUser(AbstractUser):
     ROLE_CHOICES = [
-        ('head_doctor', 'Главврач'),
+        ('doctor', 'Врач'),
         ('accountant', 'Бухгалтер'),
     ]
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)

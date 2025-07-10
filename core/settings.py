@@ -71,7 +71,11 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True 
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = 'core.urls'
 
@@ -166,13 +170,13 @@ SWAGGER_SETTINGS = {
 
 # Custom Admin Settings
 JAZZMIN_SETTINGS = {
-    "site_title": "Desphixs",
-    "site_header": "Desphixs",
-    "site_brand": "Modern Marketplace ",
+    "site_title": "Zyko",
+    "site_header": "Zyko",
+    "site_brand": "Sabo Dormon ",
     # "site_icon": "images/favicon.ico",
     # "site_logo": "images/logos/logo.jpg",
-    "welcome_sign": "Welcome To Desphixs",
-    "copyright": "Desphixs",
+    "welcome_sign": "Welcome To Sabo",
+    "copyright": "Zyko",
     "user_avatar": "images/photos/logo.jpg",
     "topmenu_links": [
         {"name": "Dashboard", "url": "home", "permissions": ["auth.view_user"]},

@@ -24,7 +24,7 @@ class ApprovePatientView(APIView):
         patient = get_object_or_404(Patient, pk=pk)
         comment = request.data.get("comment", "")
 
-        if role == "head_doctor":
+        if role == "doctor":
             patient.approved_by_doctor = True
             patient.doctor_comment = comment
         elif role == "accountant":
@@ -46,13 +46,13 @@ class RejectPatientView(APIView):
         token_payload = request.auth
         role = token_payload.get("role")
 
-        if role not in ["head_doctor", "accountant"]:
+        if role not in ["doctor", "accountant"]:
             return Response({"error": "⛔ У вас нет прав для отклонения"}, status=403)
 
         patient = get_object_or_404(Patient, pk=pk)
         comment = request.data.get("comment", "")
 
-        if role == "head_doctor":
+        if role == "doctor":
             patient.reject(by="doctor", comment=comment)
         elif role == "accountant":
             patient.reject(by="accountant", comment=comment)
