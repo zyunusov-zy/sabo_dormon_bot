@@ -13,12 +13,20 @@ import axiosInstance from "@/utils/axiosInstance";
 import getRoleFromAccessToken from "../utils/getRoleJWT";
 
 const StatusBadge = ({ status }) => {
-  console.log(status);
   const map = {
     approved: { text: "Одобрено", className: "bg-green-100 text-green-800" },
-    approved_by_doctor: { text: "Одобрено", className: "bg-green-100 text-green-800" },
-    approved_by_accountant: { text: "Одобрено", className: "bg-green-100 text-green-800" },
-    fully_approved: { text: "Одобрено", className: "bg-green-100 text-green-800" },
+    approved_by_doctor: {
+      text: "Ожидание",
+      className: "bg-yellow-100 text-yellow-800",
+    },
+    approved_by_accountant: {
+      text: "Ожидание",
+      className: "bg-yellow-100 text-yellow-800",
+    },
+    fully_approved: {
+      text: "Одобрено",
+      className: "bg-green-100 text-green-800",
+    },
     rejected: { text: "Отклонено", className: "bg-red-100 text-red-800" },
     waiting: { text: "Ожидание", className: "bg-yellow-100 text-yellow-800" },
   };
@@ -30,24 +38,17 @@ const StatusBadge = ({ status }) => {
   return <Badge className={s.className}>{s.text}</Badge>;
 };
 
-const ActionButtons = ({
-  patient,
-  onApprove,
-  onReject,
-  userRole,
-}) => {
-  const isDoctorRole = userRole === "doctor";
-  const isAccountantRole = userRole === "accountant";
+const ActionButtons = ({ patient, onApprove, onReject, userRole }) => {
+  const isDoctor = userRole === "doctor";
+  const isAccountant = userRole === "accountant";
 
-  // Determine if buttons should be shown
-  const showDoctorButtons =
-    isDoctorRole && !patient.approved_by_doctor && !patient.rejected_by_doctor;
-  const showAccountantButtons =
-    isAccountantRole &&
-    !patient.approved_by_accountant &&
-    !patient.rejected_by_accountant;
+  const alreadyActed =
+    (isDoctor && (patient.approved_by_doctor || patient.rejected_by_doctor)) ||
+    (isAccountant &&
+      (patient.approved_by_accountant || patient.rejected_by_accountant));
 
-  if (!showDoctorButtons && !showAccountantButtons) return null;
+  if (!isDoctor && !isAccountant) return null;
+  if (alreadyActed) return null;
 
   return (
     <div className="flex gap-2">
@@ -98,7 +99,7 @@ const ApprovalStatus = ({ patient }) => {
 };
 
 const checkLateness = (dateStr, status) => {
-  if (status === "approved" || status === "rejected")
+  if (status === "fully_approved" || status === "rejected")
     return { late: false, days: 0 };
 
   const now = new Date();
@@ -216,81 +217,83 @@ export default function Dashboard() {
     fetchPatients();
   }, []);
 
-const handleApprove = async (patientId, role) => {
-  try {
-    const comment = "";
+  const handleApprove = async (patientId, role) => {
+    try {
+      const comment = "";
 
-    await axiosInstance.post(`/api/patients/${patientId}/approve/`, {
-      comment,
-    });
+      await axiosInstance.post(`/api/patients/${patientId}/approve/`, {
+        comment,
+      });
 
-    setPatients((prev) =>
-      prev.map((p) => {
-        if (p.id === patientId) {
-          const updated = { ...p };
-          if (role === "doctor") {
-            updated.approved_by_doctor = true;
-            updated.doctor_comment = comment;
-          } else if (role === "accountant") {
-            updated.approved_by_accountant = true;
-            updated.accountant_comment = comment;
+      setPatients((prev) =>
+        prev.map((p) => {
+          if (p.id === patientId) {
+            const updated = { ...p };
+            if (role === "doctor") {
+              updated.approved_by_doctor = true;
+              updated.doctor_comment = comment;
+            } else if (role === "accountant") {
+              updated.approved_by_accountant = true;
+              updated.accountant_comment = comment;
+            }
+
+            if (updated.approved_by_doctor && updated.approved_by_accountant) {
+              updated.is_fully_approved = true;
+              updated.status = "approved";
+            }
+
+            return updated;
           }
+          return p;
+        })
+      );
+    } catch (error) {
+      console.error("Ошибка при одобрении:", error);
+    }
+  };
 
-          if (updated.approved_by_doctor && updated.approved_by_accountant) {
-            updated.is_fully_approved = true;
-            updated.status = "approved";
+  const handleReject = async (patientId, role) => {
+    try {
+      const comment = "";
+
+      await axiosInstance.post(`/api/patients/${patientId}/reject/`, {
+        comment,
+      });
+
+      setPatients((prev) =>
+        prev.map((p) => {
+          if (p.id === patientId) {
+            const updated = { ...p };
+            if (role === "doctor") {
+              updated.rejected_by_doctor = true;
+              updated.doctor_comment = comment;
+            } else if (role === "accountant") {
+              updated.rejected_by_accountant = true;
+              updated.accountant_comment = comment;
+            }
+
+            updated.is_rejected = true;
+            updated.status = "rejected";
+
+            return updated;
           }
-
-          return updated;
-        }
-        return p;
-      })
-    );
-  } catch (error) {
-    console.error("Ошибка при одобрении:", error);
-  }
-};
-
-const handleReject = async (patientId, role) => {
-  try {
-    const comment = "";
-
-    await axiosInstance.post(`/api/patients/${patientId}/reject/`, {
-      comment,
-    });
-
-    setPatients((prev) =>
-      prev.map((p) => {
-        if (p.id === patientId) {
-          const updated = { ...p };
-          if (role === "doctor") {
-            updated.rejected_by_doctor = true;
-            updated.doctor_comment = comment;
-          } else if (role === "accountant") {
-            updated.rejected_by_accountant = true;
-            updated.accountant_comment = comment;
-          }
-
-          updated.is_rejected = true;
-          updated.status = "rejected";
-
-          return updated;
-        }
-        return p;
-      })
-    );
-  } catch (error) {
-    console.error("Ошибка при отклонении:", error);
-  }
-};
-
+          return p;
+        })
+      );
+    } catch (error) {
+      console.error("Ошибка при отклонении:", error);
+    }
+  };
 
   const filtered = patients.filter((p) => {
     const matchesStatus =
       statusFilter === "Все" ||
       (statusFilter === "Одобрено" && p.status === "fully_approved") ||
       (statusFilter === "Отклонено" && p.status === "rejected") ||
-      (statusFilter === "Ожидание" && (p.status === "waiting" || p.status === "approved_by_doctor" || p.status === "approved_by_accountant"));
+      (statusFilter === "Ожидание" &&
+        (p.status === "waiting" ||
+          p.status === "approved_by_doctor" ||
+          p.status === "approved_by_accountant"));
     const matchesSearch = p.full_name
       .toLowerCase()
       .includes(search.toLowerCase());
@@ -298,9 +301,15 @@ const handleReject = async (patientId, role) => {
   });
 
   const total = patients.length;
-  const approved = patients.filter((p) => p.status === "approved").length;
+  const approved = patients.filter((p) => p.status === "fully_approved").length;
   const rejected = patients.filter((p) => p.status === "rejected").length;
-  const pending = patients.filter((p) => p.status === "pending").length;
+  const pending = patients.filter(
+    (p) =>
+      !p.approved_by_doctor ||
+      !p.approved_by_accountant ||
+      p.status === "waiting"
+  ).length;
+
   const late = patients.filter(
     (p) => checkLateness(p.created_at, p.status).late
   ).length;
@@ -320,24 +329,9 @@ const handleReject = async (patientId, role) => {
 
         {/* Role Selector */}
         <div className="flex justify-center gap-4">
-          <Button
-            variant={userRole === "doctor" ? "default" : "outline"}
-            onClick={() => setUserRole("doctor")}
-            className={
-              userRole === "doctor" ? "bg-blue-500 hover:bg-blue-600" : ""
-            }
-          >
-            Врач
-          </Button>
-          <Button
-            variant={userRole === "accountant" ? "default" : "outline"}
-            onClick={() => setUserRole("accountant")}
-            className={
-              userRole === "accountant" ? "bg-blue-500 hover:bg-blue-600" : ""
-            }
-          >
-            Бухгалтер
-          </Button>
+          <Badge className="bg-blue-100 text-blue-800 px-4 py-2">
+              Текущая роль: {userRole === "doctor" ? "Врач" : "Бухгалтер"  }
+          </Badge>
         </div>
 
         {/* Statistics Cards */}
@@ -570,17 +564,20 @@ const handleReject = async (patientId, role) => {
                         <StatusBadge status={p.status} />
                       </td>
                       <td className="px-4 py-3">
-  {(() => {
-    const { late, days } = checkLateness(p.created_at, p.status);
-    return late ? (
-      <span className="text-orange-500 font-semibold text-sm">
-        ⚠️ {days - 3} дн.
-      </span>
-    ) : (
-      <span className="text-green-600 text-sm">Нет</span>
-    );
-  })()}
-</td>
+                        {(() => {
+                          const { late, days } = checkLateness(
+                            p.created_at,
+                            p.status
+                          );
+                          return late ? (
+                            <span className="text-orange-500 font-semibold text-sm">
+                              ⚠️ {days - 3} дн.
+                            </span>
+                          ) : (
+                            <span className="text-green-600 text-sm">Нет</span>
+                          );
+                        })()}
+                      </td>
                       <td className="px-4 py-3">
                         <ActionButtons
                           patient={p}

@@ -64,7 +64,6 @@ class Patient(models.Model):
         super().save(*args, **kwargs)
 
     def update_status(self):
-        # Если кто-то отказал — статус "Отклонено"
         if self.rejected_by_doctor or self.rejected_by_accountant:
             self.status = "rejected"
             self.is_rejected = True
@@ -90,9 +89,11 @@ class Patient(models.Model):
         """
         if by == "doctor":
             self.rejected_by_doctor = True
+            self.approved_by_doctor = False
             self.doctor_comment = comment
         elif by == "accountant":
             self.rejected_by_accountant = True
+            self.approved_by_accountant = False
             self.accountant_comment = comment
 
         self.is_rejected = True

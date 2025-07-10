@@ -26,10 +26,13 @@ class ApprovePatientView(APIView):
 
         if role == "doctor":
             patient.approved_by_doctor = True
+            patient.rejected_by_doctor = False  # ✅ сброс отказа
             patient.doctor_comment = comment
         elif role == "accountant":
             patient.approved_by_accountant = True
+            patient.rejected_by_accountant = False  # ✅ сброс отказа
             patient.accountant_comment = comment
+
         else:
             return Response({"error": "⛔ У вас нет прав для одобрения"}, status=403)
 
