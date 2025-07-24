@@ -1036,7 +1036,7 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
         await message.answer("✅ Анкета успешно сохранена.")
     except Exception as e:
         await message.answer("⚠️ Ошибка при сохранении данных.")
-        print(f"Error saving to Google Drive: {e}")
+        print(f"Error saving: {e}")
 
     summary = (
         "✅ <b>Анкета завершена!</b>\n\n"
@@ -1055,3 +1055,75 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
     await message.answer(format_conclusion_message(conclusion), parse_mode="HTML")
 
     await state.clear()
+
+# @router.message(StateFilter(QuestionnaireStates.Q25_FinalComment), F.content_type == types.ContentType.TEXT)
+# async def questionnaire_final_comment(message: Message, state: FSMContext):
+#     await state.update_data(q25_final_comment=message.text)
+#     data = await state.get_data()
+
+#     full_name = data.get("q1_full_name")
+#     phone_number = data.get("q4_phone_number")
+#     birth_date_str = data.get("q2_birth_date")
+#     birth_date = datetime.strptime(birth_date_str, "%d.%m.%Y").date()
+
+#     telegram_id = message.from_user.id
+#     bot_user = await sync_to_async(BotUser.objects.get)(telegram_id=telegram_id)
+
+#     existing_patient_qs = Patient.objects.filter(
+#         full_name=full_name,
+#         phone_number=phone_number,
+#         birth_date=birth_date
+#     )
+#     patient = await sync_to_async(existing_patient_qs.first)()
+#     folder_id = patient.folder_id if patient else None
+
+#     if not folder_id:
+#         folder_id = create_folder(f"Анкета пациента – {full_name}", parent_id=PARENT_FOLDER_ID)
+#         drive_folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+#     else:
+#         drive_folder_url = patient.drive_folder_url
+#         await message.answer("📁 Анкета уже была сохранена ранее для этого пациента. Старая папка будет использована повторно.")
+
+#     await message.answer("📂 Сохраняем данные анкеты...")
+
+#     try:
+#         await save_full_questionnaire_to_drive(data, message.bot, folder_id=folder_id)
+
+#         if not patient:
+#             patient = await sync_to_async(Patient.objects.create)(
+#                 bot_user=bot_user,
+#                 full_name=full_name,
+#                 phone_number=phone_number,
+#                 birth_date=birth_date,
+#                 folder_id=folder_id,
+#                 drive_folder_url=drive_folder_url
+#             )
+#         else:
+#             patient.folder_id = folder_id
+#             patient.drive_folder_url = drive_folder_url
+#             await sync_to_async(patient.save)()
+
+#         await message.answer("✅ Анкета успешно сохранена.")
+
+#     except Exception as e:
+#         await message.answer("⚠️ Ошибка при сохранении данных на Google Drive.")
+#         print(f"[ERROR] Ошибка при сохранении в Google Drive: {e}")
+#         return
+
+#     summary = (
+#         "✅ <b>Анкета завершена!</b>\n\n"
+#         f"👤 <b>ФИО:</b> {data.get('q1_full_name')}\n"
+#         f"📅 <b>Дата рождения:</b> {data.get('q2_birth_date')}\n"
+#         f"🧑 <b>Пол:</b> {data.get('q3_gender')}\n"
+#         f"📞 <b>Телефон:</b> {data.get('q4_phone_number')}\n"
+#         f"📲 <b>Telegram:</b> {data.get('q5_telegram_username')}\n"
+#         f"👨‍👩‍👧‍👦 <b>Кто работает в семье:</b> {data.get('q21_family_work')}\n"
+#         f"🏠 <b>Тип жилья:</b> {data.get('q22_housing_type')}\n"
+#         f"📄 <b>Комментарий:</b> {data.get('q25_final_comment')}\n"
+#     )
+
+#     conclusion = calculate_final_conclusion(data)
+#     await message.answer(summary, parse_mode="HTML")
+#     await message.answer(format_conclusion_message(conclusion), parse_mode="HTML")
+
+#     await state.clear()

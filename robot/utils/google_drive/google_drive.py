@@ -13,6 +13,9 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 SERVICE_ACCOUNT_PATH = os.getenv('GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH')
 PARENT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_PARENT_FOLDER_ID")
 
+
+print("[DEBUG] FOLDER_ID: ", PARENT_FOLDER_ID)
+print("[DEBUG] ACCOUNT: ", SERVICE_ACCOUNT_PATH)
 QUESTION_LABELS = {
     "q1_full_name": "ФИО",
     "q2_birth_date": "Дата рождения",

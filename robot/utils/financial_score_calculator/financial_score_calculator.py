@@ -10,7 +10,7 @@ def calculate_final_conclusion(data: dict) -> dict:
         return 0
 
     def _calculate_children_points(children: str) -> int:
-        print("[DEBUG] CHILDREN: ", children)
+        # print("[DEBUG] CHILDREN: ", children)
         try:
             if children == "5+":
                 return 2
