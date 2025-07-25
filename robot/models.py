@@ -110,8 +110,6 @@ class Patient(models.Model):
         )
         self.update_status()
         self.save()
-       
+
     def __str__(self):
         return f"{self.full_name} ({self.phone_number})"
-
-

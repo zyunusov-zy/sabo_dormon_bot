@@ -3,11 +3,9 @@ import os
 import django
 from django.core.management.base import BaseCommand
 
-# Настройка Django окружения
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
 django.setup()
 
-# После настройки Django, можно импортировать settings
 from django.conf import settings
 
 from aiogram import Bot, Dispatcher
@@ -27,17 +25,14 @@ class Command(BaseCommand):
         asyncio.run(self.main())
 
     async def main(self):
-        # Создание бота с правильным способом задания parse_mode
         bot = Bot(
             token=settings.BOT_TOKEN,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
         dp = Dispatcher(storage=MemoryStorage())
 
-        # Регистрация хендлеров
         register_all_handlers(dp)
 
-        # Команды и уведомления
         await set_default_commands(bot)
         await on_startup_notify(bot)
 

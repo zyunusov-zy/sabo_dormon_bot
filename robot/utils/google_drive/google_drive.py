@@ -6,6 +6,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from aiogram import Bot
 from googleapiclient.errors import HttpError
+from robot.utils.misc.logging import log_handler, log_user_action, log_state_change, log_error, log_file_operation
 
 load_dotenv(dotenv_path=".env", override=True)
 
@@ -92,7 +93,7 @@ def upload_text_to_drive(content: str, filename: str, folder_id: str = None) -> 
     file = service.files().create(body=metadata, media_body=media, fields='id').execute()
     return file['id']
 
-async def save_file_by_id(file_id: str, folder_id: str, filename: str, bot: Bot):
+async def save_file_by_id(file_id: str, folder_id: str, filename: str, bot: Bot, user_id: int = None):
     try:
         file = await bot.get_file(file_id)
         file_path = file.file_path
@@ -110,30 +111,42 @@ async def save_file_by_id(file_id: str, folder_id: str, filename: str, bot: Bot)
             mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         elif ext.lower() == '.txt':
             mime_type = "text/plain"
-        
+
+        log_user_action(
+            user_id=user_id,
+            action="Uploading file",
+            state="save_file_by_id",
+            extra_data=f"Filename: {filename}{ext}, FolderID: {folder_id}"
+        )
+
         return upload_file_to_folder(file_bytes.read(), f"{filename}{ext}", mime_type, folder_id)
+
     except Exception as e:
+        log_error(
+            user_id=user_id,
+            error=e,
+            action="Failed to upload file",
+            state="save_file_by_id",
+        )
         print(f"Error saving file {file_id}: {e}")
         raise
 
-async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot, folder_id: str):
+
+async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot, folder_id: str, user_id: int = None):
     try:
         full_name = user_data.get('q1_full_name', 'Пациент')
-        # root_folder_name = f"Анкета пациента – {full_name}"
-        root_folder_id = folder_id 
-        
-        
+        root_folder_id = folder_id
+
         text_parts = []
-        
+
         if full_name:
             text_parts.append(f"ФИО: {full_name}")
-        
+
         for key, value in user_data.items():
             if key == "q1_full_name" or key == "full_name":
                 continue
             label = QUESTION_LABELS.get(key, key)
 
-            # 📎 Файловые поля
             if key in QUESTION_FILE_KEYS:
                 if isinstance(value, list):
                     text_parts.append(f"{label}: {len(value)} файл(ов) ✅")
@@ -143,6 +156,14 @@ async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot, folder_id:
                 text_parts.append(f"{label}: {value}")
 
         full_text = "\n".join(text_parts)
+
+        log_user_action(
+            user_id=user_id,
+            action="Uploading questionnaire summary",
+            state="save_full_questionnaire_to_drive",
+            extra_data="Анкета.txt"
+        )
+
         upload_text_to_drive(full_text, "Анкета.txt", folder_id=root_folder_id)
 
         # Загружаем вложения
@@ -153,14 +174,33 @@ async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot, folder_id:
 
             subfolder_id = create_folder(folder_name, parent_id=root_folder_id)
 
+            log_user_action(
+                user_id=user_id,
+                action="Created subfolder for attachments",
+                state="save_full_questionnaire_to_drive",
+                extra_data=f"{folder_name} (Field: {field})"
+            )
+
             if isinstance(file_value, list):
                 for idx, file_id in enumerate(file_value):
                     if file_id:
-                        await save_file_by_id(file_id, subfolder_id, f"{folder_name}_{idx+1}", bot)
+                        await save_file_by_id(file_id, subfolder_id, f"{folder_name}_{idx+1}", bot, user_id)
             else:
-                await save_file_by_id(file_value, subfolder_id, folder_name, bot)
+                await save_file_by_id(file_value, subfolder_id, folder_name, bot, user_id)
+
+        log_user_action(
+            user_id=user_id,
+            action="Finished saving questionnaire",
+            state="save_full_questionnaire_to_drive"
+        )
 
     except Exception as e:
+        log_error(
+            user_id=user_id,
+            error=e,
+            action="Error saving questionnaire",
+            state="save_full_questionnaire_to_drive",
+        )
         print(f"❌ Error in save_full_questionnaire_to_drive: {e}")
         raise
 
