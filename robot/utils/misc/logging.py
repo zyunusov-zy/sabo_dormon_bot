@@ -92,32 +92,38 @@ def log_handler(func):
     """Декоратор для логирования всех хендлеров"""
     import functools
     import inspect
-    
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         message = None
         state = None
-        
+
         sig = inspect.signature(func)
         bound_args = sig.bind(*args, **kwargs)
         bound_args.apply_defaults()
-        
+
         for param_name, param_value in bound_args.arguments.items():
-            if hasattr(param_value, 'from_user') and hasattr(param_value, 'text'):
+            if hasattr(param_value, 'from_user') and hasattr(param_value, 'chat'):
                 message = param_value
             elif hasattr(param_value, 'get_state'):
                 state = param_value
-        
+
         user_id = message.from_user.id if message and hasattr(message, 'from_user') else 'unknown'
         current_state = await state.get_state() if state else None
-        
+
+        text_value = getattr(message, 'text', None)
+        if text_value is None:
+            extra = f"Content type: {getattr(message, 'content_type', 'unknown')}"
+        else:
+            extra = f"Text: {text_value[:50]}"
+
         log_user_action(
             user_id=user_id,
             action=f"Handler: {func.__name__}",
             state=current_state,
-            extra_data=f"Text: {getattr(message, 'text', 'No text')[:50]}" if message else "No message"
+            extra_data=extra
         )
-        
+
         try:
             result = await func(*args, **kwargs)
             return result
@@ -129,5 +135,5 @@ def log_handler(func):
                 state=current_state
             )
             raise
-    
+
     return wrapper
