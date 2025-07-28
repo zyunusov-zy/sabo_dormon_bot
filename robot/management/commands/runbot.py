@@ -17,6 +17,7 @@ from robot.handlers import register_all_handlers
 from robot.utils.set_bot_commands import set_default_commands
 from robot.utils.notify_admins import on_startup_notify
 
+from robot.middlewares.throttling import ThrottlingMiddleware
 
 class Command(BaseCommand):
     help = 'Run the Telegram bot with: python manage.py runbot'
@@ -29,7 +30,10 @@ class Command(BaseCommand):
             token=settings.BOT_TOKEN,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
+
         dp = Dispatcher(storage=MemoryStorage())
+
+        dp.message.middleware.register(ThrottlingMiddleware(rate_limit=1.0))
 
         register_all_handlers(dp)
 
