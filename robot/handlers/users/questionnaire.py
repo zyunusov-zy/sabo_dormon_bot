@@ -18,6 +18,14 @@ from robot.utils.validators import is_pdf, is_allowed_file
 from robot.utils.misc.logging import log_handler, log_user_action, log_state_change, log_error, log_file_operation
 
 
+import os
+from robot.utils.google_drive.local_file_storage import (
+    save_full_questionnaire_locally,
+    get_patient_folder_path,
+    create_local_folder,
+    list_all_questionnaires
+)
+
 router = Router()
 
 REGIONS = [
@@ -1604,6 +1612,121 @@ async def skip_additional_file(message: types.Message, state: FSMContext):
 
     await proceed_with_keyboard("Q25_FinalComment", message, state)
 
+# @router.message(StateFilter(QuestionnaireStates.Q25_FinalComment), F.content_type == types.ContentType.TEXT)
+# async def questionnaire_final_comment(message: Message, state: FSMContext):
+#     user_id = message.from_user.id
+#     await state.update_data(q25_final_comment=message.text)
+
+#     log_user_action(
+#         user_id=user_id,
+#         action="Entered final comment",
+#         state="QuestionnaireStates.Q25_FinalComment",
+#         extra_data=f"Comment: {message.text}"
+#     )
+
+#     data = await state.get_data()
+
+#     full_name = data.get("q1_full_name")
+#     phone_number = data.get("q4_phone_number")
+#     birth_date_str = data.get("q2_birth_date")
+#     birth_date = datetime.strptime(birth_date_str, "%d.%m.%Y").date()
+
+#     telegram_id = message.from_user.id
+#     bot_user = await sync_to_async(BotUser.objects.get)(telegram_id=telegram_id)
+
+#     existing_patient_qs = Patient.objects.filter(
+#         full_name=full_name,
+#         phone_number=phone_number,
+#         birth_date=birth_date
+#     )
+
+#     patient = await sync_to_async(existing_patient_qs.first)()
+#     folder_id = patient.folder_id if patient else None
+
+#     if not folder_id:
+#         folder_id = create_folder(f"Анкета пациента – {full_name}", parent_id=PARENT_FOLDER_ID)
+#         drive_folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+
+#         if not patient:
+#             patient = await sync_to_async(Patient.objects.create)(
+#                 bot_user=bot_user,
+#                 full_name=full_name,
+#                 phone_number=phone_number,
+#                 birth_date=birth_date,
+#                 folder_id=folder_id,
+#                 drive_folder_url=drive_folder_url
+#             )
+#             log_user_action(
+#                 user_id=user_id,
+#                 action="Created new patient record",
+#                 state="QuestionnaireStates.Q25_FinalComment",
+#                 extra_data=f"Folder ID: {folder_id}"
+#             )
+#         else:
+#             patient.folder_id = folder_id
+#             patient.drive_folder_url = drive_folder_url
+#             await sync_to_async(patient.save)()
+#             log_user_action(
+#                 user_id=user_id,
+#                 action="Updated existing patient record with new folder",
+#                 state="QuestionnaireStates.Q25_FinalComment",
+#                 extra_data=f"Folder ID: {folder_id}"
+#             )
+#     else:
+#         await message.answer("📁 Анкета уже была сохранена ранее для этого пациента. Старая папка будет использована повторно.")
+#         log_user_action(
+#             user_id=user_id,
+#             action="Used existing folder for questionnaire",
+#             state="QuestionnaireStates.Q25_FinalComment",
+#             extra_data=f"Folder ID: {folder_id}"
+#         )
+
+#     await message.answer("📂 Сохраняем данные анкеты...")
+
+#     try:
+#         await save_full_questionnaire_to_drive(data, message.bot, folder_id=folder_id, user_id=user_id)
+#         await message.answer("✅ Анкета успешно сохранена.")
+#         log_user_action(
+#             user_id=user_id,
+#             action="Saved questionnaire to Google Drive",
+#             state="QuestionnaireStates.Q25_FinalComment",
+#             extra_data=f"Folder ID: {folder_id}"
+#         )
+#     except Exception as e:
+#         await message.answer("⚠️ Ошибка при сохранении анкеты в Google Drive.")
+#         log_error(
+#             user_id=user_id,
+#             error=e,
+#             context="Saving questionnaire to Google Drive",
+#             state="QuestionnaireStates.Q25_FinalComment"
+#         )
+#         return
+
+#     summary = (
+#         "✅ <b>Анкета завершена!</b>\n\n"
+#         f"👤 <b>ФИО:</b> {data.get('q1_full_name')}\n"
+#         f"📅 <b>Дата рождения:</b> {data.get('q2_birth_date')}\n"
+#         f"🧑 <b>Пол:</b> {data.get('q3_gender')}\n"
+#         f"📞 <b>Телефон:</b> {data.get('q4_phone_number')}\n"
+#         f"📲 <b>Telegram:</b> {data.get('q5_telegram_username')}\n"
+#         f"👨‍👩‍👧‍👦 <b>Кто работает в семье:</b> {data.get('q21_family_work')}\n"
+#         f"🏠 <b>Тип жилья:</b> {data.get('q22_housing_type')}\n"
+#         f"📄 <b>Комментарий:</b> {data.get('q25_final_comment')}\n"
+#     )
+#     conclusion = calculate_final_conclusion(data)
+
+#     await message.answer(summary, parse_mode="HTML")
+#     await message.answer(format_conclusion_message(conclusion), parse_mode="HTML")
+
+#     log_user_action(
+#         user_id=user_id,
+#         action="Finished questionnaire",
+#         state="QuestionnaireStates.Q25_FinalComment"
+#     )
+
+#     await state.clear()
+
+
 @router.message(StateFilter(QuestionnaireStates.Q25_FinalComment), F.content_type == types.ContentType.TEXT)
 async def questionnaire_final_comment(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1633,63 +1756,66 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
     )
 
     patient = await sync_to_async(existing_patient_qs.first)()
-    folder_id = patient.folder_id if patient else None
+    
+    # Генерируем путь к локальной папке пациента
+    folder_path = get_patient_folder_path(full_name, birth_date_str)
 
-    if not folder_id:
-        folder_id = create_folder(f"Анкета пациента – {full_name}", parent_id=PARENT_FOLDER_ID)
-        drive_folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
-
-        if not patient:
-            patient = await sync_to_async(Patient.objects.create)(
-                bot_user=bot_user,
-                full_name=full_name,
-                phone_number=phone_number,
-                birth_date=birth_date,
-                folder_id=folder_id,
-                drive_folder_url=drive_folder_url
-            )
+    if not patient:
+        # Создаем нового пациента
+        patient = await sync_to_async(Patient.objects.create)(
+            bot_user=bot_user,
+            full_name=full_name,
+            phone_number=phone_number,
+            birth_date=birth_date,
+            folder_id=folder_path,
+            drive_folder_url=f"file://{folder_path}"
+        )
+        log_user_action(
+            user_id=user_id,
+            action="Created new patient record",
+            state="QuestionnaireStates.Q25_FinalComment",
+            extra_data=f"Folder path: {folder_path}"
+        )
+    else:
+        # Проверяем, существует ли папка пациента
+        if os.path.exists(folder_path):
+            await message.answer("📁 Анкета уже была сохранена ранее для этого пациента. Старая папка будет использована повторно.")
             log_user_action(
                 user_id=user_id,
-                action="Created new patient record",
+                action="Used existing folder for questionnaire",
                 state="QuestionnaireStates.Q25_FinalComment",
-                extra_data=f"Folder ID: {folder_id}"
+                extra_data=f"Folder path: {folder_path}"
             )
         else:
-            patient.folder_id = folder_id
-            patient.drive_folder_url = drive_folder_url
+            # Обновляем запись пациента с новым путем к папке
+            patient.folder_id = folder_path
+            patient.drive_folder_url = f"file://{folder_path}"
             await sync_to_async(patient.save)()
             log_user_action(
                 user_id=user_id,
                 action="Updated existing patient record with new folder",
                 state="QuestionnaireStates.Q25_FinalComment",
-                extra_data=f"Folder ID: {folder_id}"
+                extra_data=f"Folder path: {folder_path}"
             )
-    else:
-        await message.answer("📁 Анкета уже была сохранена ранее для этого пациента. Старая папка будет использована повторно.")
-        log_user_action(
-            user_id=user_id,
-            action="Used existing folder for questionnaire",
-            state="QuestionnaireStates.Q25_FinalComment",
-            extra_data=f"Folder ID: {folder_id}"
-        )
 
     await message.answer("📂 Сохраняем данные анкеты...")
 
     try:
-        await save_full_questionnaire_to_drive(data, message.bot, folder_id=folder_id)
+        # Сохраняем анкету локально вместо Google Drive
+        saved_folder_path = await save_full_questionnaire_locally(data, message.bot, user_id=user_id)
         await message.answer("✅ Анкета успешно сохранена.")
         log_user_action(
             user_id=user_id,
-            action="Saved questionnaire to Google Drive",
+            action="Saved questionnaire locally",
             state="QuestionnaireStates.Q25_FinalComment",
-            extra_data=f"Folder ID: {folder_id}"
+            extra_data=f"Folder path: {saved_folder_path}"
         )
     except Exception as e:
-        await message.answer("⚠️ Ошибка при сохранении анкеты в Google Drive.")
+        await message.answer("⚠️ Ошибка при сохранении анкеты локально.")
         log_error(
             user_id=user_id,
             error=e,
-            context="Saving questionnaire to Google Drive",
+            context="Saving questionnaire locally",
             state="QuestionnaireStates.Q25_FinalComment"
         )
         return
@@ -1717,5 +1843,3 @@ async def questionnaire_final_comment(message: Message, state: FSMContext):
     )
 
     await state.clear()
-
-

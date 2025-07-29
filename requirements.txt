@@ -23,6 +23,7 @@ djangorestframework==3.16.0
 djangorestframework_simplejwt==5.5.0
 drf-yasg==1.21.10
 environs==14.2.0
+et_xmlfile==2.0.0
 frozenlist==1.7.0
 google-api-core==2.25.1
 google-api-python-client==2.174.0
@@ -37,8 +38,11 @@ kombu==5.5.4
 magic-filter==1.0.12
 marshmallow==4.0.0
 multidict==6.6.2
+numpy==2.3.2
 oauthlib==3.3.1
+openpyxl==3.1.5
 packaging==25.0
+pandas==2.3.1
 prompt_toolkit==3.0.51
 propcache==0.3.2
 proto-plus==1.26.1

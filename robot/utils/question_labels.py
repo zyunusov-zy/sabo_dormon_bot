@@ -65,7 +65,7 @@ QUESTION_FLOW = {
         "back_button": True
     },
     "Q12_DiagnosisFile": {
-        "label": "Прикрепите фото/скан диагноза или эпикриза (по желанию).",
+        "label": "Прикрепите фото/скан диагноза или эпикриза.",
         "input_type": "file_optional",
         "back_button": True
     },

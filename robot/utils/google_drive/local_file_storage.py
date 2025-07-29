@@ -1,19 +1,12 @@
 import os
-import io
-from dotenv import load_dotenv
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+import asyncio
+from pathlib import Path
 from aiogram import Bot
-from googleapiclient.errors import HttpError
 import pandas as pd
 from robot.utils.misc.logging import log_handler, log_user_action, log_state_change, log_error, log_file_operation
 
-load_dotenv(dotenv_path=".env", override=True)
-
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
-SERVICE_ACCOUNT_PATH = os.getenv('GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH')
-PARENT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_PARENT_FOLDER_ID")
+# Базовая папка для сохранения всех анкет
+BASE_STORAGE_PATH = "questionnaire_storage"
 
 QUESTION_LABELS = {
     "q1_full_name": "ФИО",
@@ -56,33 +49,33 @@ QUESTION_FILE_KEYS = {
     "q24_additional_file": "📎 Дополнительный файл",
 }
 
-def get_drive_service():
-    if not SERVICE_ACCOUNT_PATH:
-        raise ValueError("❌ GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH not set in .env file")
+def create_safe_filename(name: str) -> str:
+    """Создает безопасное имя файла/папки, убирая недопустимые символы"""
+    unsafe_chars = '<>:"/\\|?*'
+    safe_name = name
+    for char in unsafe_chars:
+        safe_name = safe_name.replace(char, '_')
+    return safe_name
+
+def create_local_folder(name: str, parent_path: str = None) -> str:
+    """Создает локальную папку и возвращает путь к ней"""
+    if parent_path is None:
+        parent_path = BASE_STORAGE_PATH
     
-    if not os.path.exists(SERVICE_ACCOUNT_PATH):
-        raise FileNotFoundError(f"❌ Service account file not found: {SERVICE_ACCOUNT_PATH}")
+    # Создаем базовую папку если её нет
+    Path(parent_path).mkdir(parents=True, exist_ok=True)
     
-    creds = ServiceAccountCredentials.from_service_account_file(SERVICE_ACCOUNT_PATH, scopes=SCOPES)
-    return build('drive', 'v3', credentials=creds)
+    # Создаем безопасное имя папки
+    safe_name = create_safe_filename(name)
+    folder_path = os.path.join(parent_path, safe_name)
+    
+    # Создаем папку
+    Path(folder_path).mkdir(parents=True, exist_ok=True)
+    
+    return folder_path
 
-def create_folder(name: str, parent_id: str = None) -> str:
-    service = get_drive_service()
-    metadata = {'name': name, 'mimeType': 'application/vnd.google-apps.folder'}
-    if parent_id:
-        metadata['parents'] = [parent_id]
-    folder = service.files().create(body=metadata, fields='id').execute()
-    return folder['id']
-
-def upload_file_to_folder(file_bytes: bytes, filename: str, mime_type: str, folder_id: str) -> str:
-    service = get_drive_service()
-    metadata = {'name': filename, 'parents': [folder_id]}
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
-    uploaded_file = service.files().create(body=metadata, media_body=media, fields='id').execute()
-    return uploaded_file['id']
-
-def create_questionnaire_excel_bytes(user_data: dict) -> bytes:
-    """Создает Excel файл анкеты в памяти и возвращает байты"""
+def save_questionnaire_to_excel(user_data: dict, folder_path: str, filename: str = "Анкета.xlsx") -> str:
+    """Сохраняет анкету в Excel файл с двумя столбцами: Вопрос и Ответ"""
     try:
         # Подготавливаем данные для таблицы
         questions = []
@@ -120,11 +113,11 @@ def create_questionnaire_excel_bytes(user_data: dict) -> bytes:
             'Ответ': answers
         })
 
-        # Создаем Excel в памяти
-        excel_buffer = io.BytesIO()
+        # Сохраняем в Excel
+        excel_path = os.path.join(folder_path, filename)
         
         # Создаем Excel writer с настройками
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Анкета', index=False)
             
             # Получаем worksheet для настройки форматирования
@@ -183,118 +176,101 @@ def create_questionnaire_excel_bytes(user_data: dict) -> bytes:
             for row in range(1, len(df) + 2):
                 worksheet.row_dimensions[row].height = 25
 
-        # Получаем байты
-        excel_buffer.seek(0)
-        return excel_buffer.read()
+        return excel_path
 
     except Exception as e:
-        print(f"❌ Ошибка при создании Excel: {e}")
+        print(f"❌ Ошибка при сохранении Excel: {e}")
         raise
 
-def upload_excel_to_drive(excel_bytes: bytes, filename: str, folder_id: str) -> str:
-    """Загружает Excel файл на Google Drive"""
-    service = get_drive_service()
-    metadata = {
-        'name': filename,
-        'parents': [folder_id]
-    }
-    media = MediaIoBaseUpload(
-        io.BytesIO(excel_bytes), 
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    uploaded_file = service.files().create(body=metadata, media_body=media, fields='id').execute()
-    return uploaded_file['id']
+def save_text_to_local_file(content: str, filename: str, folder_path: str) -> str:
+    """Сохраняет текст в локальный файл (оставлено для совместимости)"""
+    safe_filename = create_safe_filename(filename)
+    file_path = os.path.join(folder_path, safe_filename)
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    
+    return file_path
 
-def upload_text_to_drive(content: str, filename: str, folder_id: str = None) -> str:
-    """Загружает текстовый файл на Google Drive"""
-    service = get_drive_service()
-    metadata = {'name': filename, 'mimeType': 'text/plain'}
-    if folder_id:
-        metadata['parents'] = [folder_id]
-    media = MediaIoBaseUpload(io.BytesIO(content.encode('utf-8')), mimetype='text/plain')
-    file = service.files().create(body=metadata, media_body=media, fields='id').execute()
-    return file['id']
-
-async def save_file_by_id(file_id: str, folder_id: str, filename: str, bot: Bot, user_id: int = None):
+async def save_telegram_file_locally(file_id: str, folder_path: str, filename: str, bot: Bot, user_id: int = None) -> str:
+    """Скачивает файл из Telegram и сохраняет локально"""
     try:
         file = await bot.get_file(file_id)
         file_path = file.file_path
         file_bytes = await bot.download_file(file_path)
+        
+        # Получаем расширение файла
         ext = os.path.splitext(file_path)[-1] or ".bin"
-
-        mime_type = "application/octet-stream"
-        if ext.lower() in ['.jpg', '.jpeg']:
-            mime_type = "image/jpeg"
-        elif ext.lower() == '.png':
-            mime_type = "image/png"
-        elif ext.lower() == '.pdf':
-            mime_type = "application/pdf"
-        elif ext.lower() in ['.doc', '.docx']:
-            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        elif ext.lower() == '.txt':
-            mime_type = "text/plain"
-
+        safe_filename = create_safe_filename(filename) + ext
+        
+        local_file_path = os.path.join(folder_path, safe_filename)
+        
+        # Сохраняем файл
+        with open(local_file_path, 'wb') as f:
+            f.write(file_bytes.read())
+        
         log_user_action(
             user_id=user_id,
-            action="Uploading file",
-            state="save_file_by_id",
-            extra_data=f"Filename: {filename}{ext}, FolderID: {folder_id}"
+            action="File saved locally",
+            state="save_telegram_file_locally",
+            extra_data=f"File: {safe_filename}, Path: {local_file_path}"
         )
-
-        return upload_file_to_folder(file_bytes.read(), f"{filename}{ext}", mime_type, folder_id)
+        
+        return local_file_path
 
     except Exception as e:
         log_error(
             user_id=user_id,
             error=e,
-            action="Failed to upload file",
-            state="save_file_by_id",
+            action="Failed to save file locally",
+            state="save_telegram_file_locally",
         )
-        print(f"Error saving file {file_id}: {e}")
+        print(f"❌ Error saving file {file_id}: {e}")
         raise
 
-async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot, folder_id: str, user_id: int = None):
+async def save_full_questionnaire_locally(user_data: dict, bot: Bot, user_id: int = None) -> str:
+    """Сохраняет всю анкету в локальную папку с Excel файлом"""
     try:
         full_name = user_data.get('q1_full_name', 'Пациент')
         birth_date = user_data.get('q2_birth_date', 'Unknown')
-        root_folder_id = folder_id
-
-        # Создаем Excel файл анкеты
-        excel_bytes = create_questionnaire_excel_bytes(user_data)
+        
+        # Создаем основную папку для пациента
+        folder_name = f"Анкета_пациента_{full_name}_{birth_date}"
+        patient_folder_path = create_local_folder(folder_name)
+        
+        # Сохраняем анкету в Excel формате
+        excel_file_path = save_questionnaire_to_excel(user_data, patient_folder_path)
         
         log_user_action(
             user_id=user_id,
-            action="Uploading questionnaire Excel",
-            state="save_full_questionnaire_to_drive",
-            extra_data="Анкета.xlsx"
+            action="Questionnaire Excel saved locally",
+            state="save_full_questionnaire_locally",
+            extra_data=f"File: {excel_file_path}"
         )
 
-        # Загружаем Excel файл на Drive
-        upload_excel_to_drive(excel_bytes, "Анкета.xlsx", folder_id=root_folder_id)
-
-        # Создаем папку для файлов
-        files_folder_id = create_folder("Файлы", parent_id=root_folder_id)
+        # Создаем общую папку для всех файлов пациента
+        files_folder_path = create_local_folder("Файлы", parent_path=patient_folder_path)
         
         log_user_action(
             user_id=user_id,
             action="Created files folder for patient",
-            state="save_full_questionnaire_to_drive",
-            extra_data=f"Files folder ID: {files_folder_id}"
+            state="save_full_questionnaire_locally",
+            extra_data=f"Files folder: {files_folder_path}"
         )
 
-        # Загружаем вложения в подпапки внутри папки "Файлы"
+        # Сохраняем файлы-вложения
         for field, folder_name in QUESTION_FILE_KEYS.items():
             file_value = user_data.get(field)
             if not file_value:
                 continue
 
             # Создаем подпапку для каждого типа документов внутри папки "Файлы"
-            subfolder_id = create_folder(folder_name, parent_id=files_folder_id)
-
+            subfolder_path = create_local_folder(folder_name, parent_path=files_folder_path)
+            
             log_user_action(
                 user_id=user_id,
                 action="Created subfolder for attachments",
-                state="save_full_questionnaire_to_drive",
+                state="save_full_questionnaire_locally",
                 extra_data=f"{folder_name} (Field: {field})"
             )
 
@@ -302,33 +278,75 @@ async def save_full_questionnaire_to_drive(user_data: dict, bot: Bot, folder_id:
                 # Если несколько файлов
                 for idx, file_id in enumerate(file_value):
                     if file_id:
-                        await save_file_by_id(file_id, subfolder_id, f"{folder_name}_{idx+1}", bot, user_id)
+                        await save_telegram_file_locally(
+                            file_id, 
+                            subfolder_path, 
+                            f"{folder_name}_{idx+1}", 
+                            bot, 
+                            user_id
+                        )
             else:
                 # Если один файл
-                await save_file_by_id(file_value, subfolder_id, folder_name, bot, user_id)
+                await save_telegram_file_locally(
+                    file_value, 
+                    subfolder_path, 
+                    folder_name, 
+                    bot, 
+                    user_id
+                )
 
         log_user_action(
             user_id=user_id,
-            action="Finished saving questionnaire",
-            state="save_full_questionnaire_to_drive"
+            action="Finished saving questionnaire locally",
+            state="save_full_questionnaire_locally",
+            extra_data=f"Patient folder: {patient_folder_path}"
         )
+        
+        return patient_folder_path
 
     except Exception as e:
         log_error(
             user_id=user_id,
             error=e,
-            action="Error saving questionnaire",
-            state="save_full_questionnaire_to_drive",
+            action="Error saving questionnaire locally",
+            state="save_full_questionnaire_locally",
         )
-        print(f"❌ Error in save_full_questionnaire_to_drive: {e}")
+        print(f"❌ Error in save_full_questionnaire_locally: {e}")
         raise
 
-def delete_folder(folder_id: str):
+def delete_local_folder(folder_path: str) -> bool:
+    """Удаляет локальную папку со всем содержимым"""
     try:
-        service = get_drive_service()
-        service.files().delete(fileId=folder_id).execute()
-        print(f"✅ Папка с ID {folder_id} успешно удалена.")
-        return True
-    except HttpError as e:
+        import shutil
+        if os.path.exists(folder_path):
+            shutil.rmtree(folder_path)
+            print(f"✅ Папка {folder_path} успешно удалена.")
+            return True
+        else:
+            print(f"⚠️ Папка {folder_path} не найдена.")
+            return False
+    except Exception as e:
         print(f"❌ Ошибка при удалении папки: {e}")
         return False
+
+def get_patient_folder_path(full_name: str, birth_date: str) -> str:
+    """Возвращает путь к папке пациента"""
+    folder_name = f"Анкета_пациента_{create_safe_filename(full_name)}_{birth_date}"
+    return os.path.join(BASE_STORAGE_PATH, folder_name)
+
+def list_all_questionnaires() -> list:
+    """Возвращает список всех сохранённых анкет"""
+    if not os.path.exists(BASE_STORAGE_PATH):
+        return []
+    
+    questionnaires = []
+    for item in os.listdir(BASE_STORAGE_PATH):
+        item_path = os.path.join(BASE_STORAGE_PATH, item)
+        if os.path.isdir(item_path):
+            questionnaires.append({
+                'name': item,
+                'path': item_path,
+                'created': os.path.getctime(item_path)
+            })
+    
+    return sorted(questionnaires, key=lambda x: x['created'], reverse=True)
