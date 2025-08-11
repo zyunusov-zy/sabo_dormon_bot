@@ -1,37 +1,30 @@
 import asyncio
-
-from aiogram import types, Dispatcher
-from aiogram.dispatcher import DEFAULT_RATE_LIMIT
-from aiogram.dispatcher.handler import CancelHandler, current_handler
-from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.utils.exceptions import Throttled
+from aiogram import BaseMiddleware
+from aiogram.types import Message
+from typing import Callable, Dict, Any
+import time
 
 
 class ThrottlingMiddleware(BaseMiddleware):
-    """
-    Simple middleware
-    """
+    def __init__(self, rate_limit: float = 2.0):
+        self.rate_limit = rate_limit
+        self._last_called: Dict[int, float] = {}
 
-    def __init__(self, limit=DEFAULT_RATE_LIMIT, key_prefix='antiflood_'):
-        self.rate_limit = limit
-        self.prefix = key_prefix
-        super(ThrottlingMiddleware, self).__init__()
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Any],
+        message: Message,
+        data: Dict[str, Any]
+    ) -> Any:
+        user_id = message.from_user.id
+        now = time.time()
 
-    async def on_process_message(self, message: types.Message, data: dict):
-        handler = current_handler.get()
-        dispatcher = Dispatcher.get_current()
-        if handler:
-            limit = getattr(handler, "throttling_rate_limit", self.rate_limit)
-            key = getattr(handler, "throttling_key", f"{self.prefix}_{handler.__name__}")
-        else:
-            limit = self.rate_limit
-            key = f"{self.prefix}_message"
-        try:
-            await dispatcher.throttle(key, rate=limit)
-        except Throttled as t:
-            await self.message_throttled(message, t)
-            raise CancelHandler()
+        last_time = self._last_called.get(user_id, 0)
+        delta = now - last_time
 
-    async def message_throttled(self, message: types.Message, throttled: Throttled):
-        if throttled.exceeded_count <= 2:
-            await message.reply("Too many requests!")
+        if delta < self.rate_limit:
+            await message.answer("⏱ Пожалуйста, не так быстро. Подождите немного...")
+            return
+
+        self._last_called[user_id] = now
+        return await handler(message, data)
