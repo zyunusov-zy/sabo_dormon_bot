@@ -29,6 +29,7 @@ QUESTION_LABELS = {
     "q19_children_count": "Сколько детей в семье?",
     "q21_family_work": "Кто работает в семье?",
     "q22_housing_type": "Какое у вас жильё?",
+    "q23_diagnosis_confirm": "Подтверждение диагноза",
     "q25_final_comment": "Комментарий к заявке",
 
     # Файлы
