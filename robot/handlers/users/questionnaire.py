@@ -4,6 +4,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 from aiogram3_calendar.simple_calendar import SimpleCalendar, SimpleCalendarCallback
 from aiogram.filters import StateFilter
 from datetime import datetime
+from aiogram.types import CallbackQuery
 
 from robot.utils.google_drive import save_full_questionnaire_to_drive, create_folder, PARENT_FOLDER_ID
 from robot.utils.financial_score_calculator import calculate_final_conclusion, format_conclusion_message
@@ -25,6 +26,8 @@ from robot.utils.google_drive.local_file_storage import (
     create_local_folder,
     list_all_questionnaires
 )
+
+from robot.utils.diseases.diseases import get_diagnoses_page, DIAGNOSES_RU
 
 router = Router()
 
@@ -75,7 +78,7 @@ STATE_ORDER = [
     "Q21_FamilyWork",
     "Q22_HousingType",
     "Q22_HousingDoc",
-    # "Q23_Contribution",
+    "Q23_DiagnosisConfirm",
     # "Q23_ContributionConfirm",
     "Q24_AdditionalFile",
     "Q25_FinalComment"
@@ -115,10 +118,10 @@ def get_previous_state(current_state: str, user_data: dict = None) -> str:
         elif current_state == "Q22_HousingDoc":
             return "Q22_HousingType"
             
-        # elif current_state == "Q23_ContributionConfirm":
-        #     return "Q23_Contribution"
-        elif current_state == "Q24_AdditionalFile":
+        elif current_state == "Q23_DiagnosisConfirm":
             return "Q22_HousingType"
+        elif current_state == "Q24_AdditionalFile":
+            return "Q23_DiagnosisConfirm"
         elif current_state == "Q25_FinalComment":
             return "Q24_AdditionalFile"
             
@@ -187,7 +190,7 @@ def clear_current_data(state_name: str, user_data: dict):
         "Q21_FamilyWork": "q21_family_work",
         "Q22_HousingType": "q22_housing_type",
         "Q22_HousingDoc": "q22_housing_doc",
-        # "Q23_Contribution": "q23_contribution",
+        "Q23_DiagnosisConfirm": "q23_diagnosis_confirm",
         "Q24_AdditionalFile": "q24_additional_file",
         "Q25_FinalComment": "q25_final_comment"
     }
@@ -307,13 +310,13 @@ async def navigate_to_state(state_name: str, message: types.Message, state: FSMC
         ))
         await state.set_state(QuestionnaireStates.Q22_HousingDoc)
         
-    # elif state_name == "Q23_Contribution":
-    #     await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardMarkup(
-    #         keyboard=[[KeyboardButton(text="⬅️ Назад")]],
-    #         resize_keyboard=True
-    #     ))
-    #     await state.set_state(QuestionnaireStates.Q23_Contribution)
-        
+    elif state_name == "Q23_DiagnosisConfirm":
+        await message.answer(get_question_label("Q23_DiagnosisConfirm"), reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+            resize_keyboard=True
+        ))
+        await state.set_state(QuestionnaireStates.Q23_DiagnosisConfirm)
+
     elif state_name == "Q24_AdditionalFile":
         await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="⬅️ Назад")]],
@@ -1516,55 +1519,40 @@ async def questionnaire_housing_doc(message: types.Message, state: FSMContext):
     await message.answer("✅ Документ по жилью получен.")
     await proceed_to_q23(message, state)
 
+async def proceed_to_q23(message: Message, state: FSMContext):
+    text, markup = get_diagnoses_page(page=1)
+    await message.answer("📝 Выберите диагноз, нажав на кнопку с номером.\n\n" + text, reply_markup=markup, parse_mode="HTML")
+    await state.set_state(QuestionnaireStates.Q23_DiagnosisConfirm)
 
-async def proceed_to_q23(message: types.Message, state: FSMContext):
-    await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=get_back_only_keyboard())
+
+@router.callback_query(lambda c: c.data.startswith("diagnosis_select_"))
+async def diagnosis_selected_handler(callback: CallbackQuery, state: FSMContext):
+    diagnosis_id = int(callback.data.replace("diagnosis_select_", ""))
+    selected = DIAGNOSES_RU.get(diagnosis_id)
+
+    if not selected:
+        await callback.answer("❌ Диагноз не найден.")
+        return
+
+    # ✅ Сохраняем диагноз
+    await state.update_data(q23_diagnosis_confirm=selected)
+
+    # Отправляем подтверждение выбора
+    await callback.message.answer(f"✅ Вы выбрали диагноз:\n<b>{selected}</b>", parse_mode="HTML")
+
+    # Переход к вопросу 24
+    await callback.message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=get_back_only_keyboard())
     await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
-    # await message.answer(get_question_label("Q23_Contribution"), reply_markup=get_back_only_keyboard())
-    # await state.set_state(QuestionnaireStates.Q23_Contribution)
 
+    await callback.answer()
 
-# @router.message(StateFilter(QuestionnaireStates.Q23_Contribution))
-# async def questionnaire_contribution(message: types.Message, state: FSMContext):
-#     raw = message.text.strip().replace(" ", "")
-#     if not raw.isdigit():
-#         await message.answer("❌ Введите только сумму в числовом формате, без текста.")
-#         return
+@router.callback_query(lambda c: c.data.startswith("diagnosis_page_"))
+async def diagnosis_page_handler(callback: CallbackQuery):
+    page = int(callback.data.replace("diagnosis_page_", ""))
+    text, markup = get_diagnoses_page(page)
 
-#     amount = int(raw)
-#     await state.update_data(q23_contribution=amount)
-
-#     flow = QUESTION_FLOW["Q23_Contribution"]
-#     formatted = f"{amount:,}".replace(",", " ")
-
-#     kb = ReplyKeyboardMarkup(
-#         keyboard=[[KeyboardButton(text=btn)] for btn in flow["confirm_buttons"]],
-#         resize_keyboard=True,
-#         one_time_keyboard=True
-#     )
-
-#     text = flow["confirm_template"].format(amount=formatted)
-#     await message.answer(text, reply_markup=kb, parse_mode="HTML")
-
-#     await state.set_state(QuestionnaireStates.Q23_ContributionConfirm)
-
-
-# @router.message(StateFilter(QuestionnaireStates.Q23_ContributionConfirm))
-# async def questionnaire_contribution_confirm(message: types.Message, state: FSMContext):
-#     flow = QUESTION_FLOW["Q23_Contribution"]
-#     confirm, retry = flow["confirm_buttons"]
-
-#     if message.text == confirm:
-#         await message.answer(get_question_label("Q24_AdditionalFile"), reply_markup=get_back_only_keyboard())
-#         await state.set_state(QuestionnaireStates.Q24_AdditionalFile)
-
-#     elif message.text == retry:
-#         await message.answer(get_question_label("Q23_Contribution"), reply_markup=ReplyKeyboardRemove())
-#         await state.set_state(QuestionnaireStates.Q23_Contribution)
-
-#     else:
-#         await message.answer("❗ Пожалуйста, выберите один из предложенных вариантов.")
-
+    await callback.message.edit_text("📝 Выберите диагноз, нажав на кнопку с номером.\n\n" + text, reply_markup=markup, parse_mode="HTML")
+    await callback.answer()
 
 
 @router.message(

@@ -29,7 +29,7 @@ class QuestionnaireStates(StatesGroup):
     Q21_FamilyWork = State() 
     Q22_HousingType = State()
     Q22_HousingDoc = State()
-    # Q23_Contribution = State()
+    Q23_DiagnosisConfirm = State()
     # Q23_ContributionConfirm = State()
     Q24_AdditionalFile = State()
     Q25_FinalComment = State()
